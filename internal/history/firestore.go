@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/aayushgogia/stock-research-tool/internal/gcp"
@@ -82,7 +84,7 @@ func (f Firestore) Save(ctx context.Context, s Snapshot) error {
 	}
 	defer r.Body.Close()
 	if r.StatusCode < 200 || r.StatusCode >= 300 {
-		return fmt.Errorf("Firestore save %s: HTTP %s", s.Ticker, r.Status)
+		return firestoreHTTPError("save "+s.Ticker, r)
 	}
 	return nil
 }
@@ -106,7 +108,7 @@ func (f Firestore) Delete(ctx context.Context, ticker, week string) error {
 	}
 	defer r.Body.Close()
 	if r.StatusCode < 200 || r.StatusCode >= 300 {
-		return fmt.Errorf("Firestore delete %s: HTTP %s", ticker, r.Status)
+		return firestoreHTTPError("delete "+ticker, r)
 	}
 	return nil
 }
@@ -134,7 +136,7 @@ func (f Firestore) Previous(ctx context.Context, ticker, week string) (*Snapshot
 	}
 	defer r.Body.Close()
 	if r.StatusCode != 200 {
-		return nil, fmt.Errorf("Firestore previous %s: HTTP %s", ticker, r.Status)
+		return nil, firestoreHTTPError("previous "+ticker, r)
 	}
 	var rows []struct {
 		Document struct {
@@ -159,4 +161,15 @@ func (f Firestore) Previous(ctx context.Context, ticker, week string) (*Snapshot
 	}
 	sort.Slice(found, func(i, j int) bool { return found[i].Week > found[j].Week })
 	return &found[0], nil
+}
+
+func firestoreHTTPError(operation string, response *http.Response) error {
+	// Google error JSON identifies the failing permission/API, but does not
+	// contain a bearer token. Cap it so job logs stay bounded.
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+	message := strings.TrimSpace(string(body))
+	if message == "" {
+		return fmt.Errorf("Firestore %s: HTTP %s", operation, response.Status)
+	}
+	return fmt.Errorf("Firestore %s: HTTP %s: %s", operation, response.Status, message)
 }
