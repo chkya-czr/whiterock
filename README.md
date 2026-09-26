@@ -22,8 +22,17 @@ contain `username:password` (or a password alone). The project uses raw Google
 REST APIs to remain a single static binary.
 
 `deploy/cloudrun-job.sh` is a deployment template. Cloud Scheduler should POST
-weekly to the Job's `:run` endpoint using an OIDC service account with
+weekly to the Job's `:run` endpoint with an OAuth service account holding
 `run.jobs.run`; deploy only after manual run validation.
+
+## Temporary local `.env` mode
+
+For temporary live testing only, copy `.env.example` to the ignored `.env`,
+fill it with real values, and run `go run ./cmd/weekly-run --local-env=.env`.
+`GOOGLE_ACCESS_TOKEN` must be a short-lived value from `gcloud auth
+application-default print-access-token`; it lets the program access the same
+Secret Manager-independent Firestore and Sheets APIs locally. Do not commit
+`.env`, and remove this local mode before production deployment.
 
 `CSU` is intentionally not included as a bare symbol: Twelve Data's exchange
 suffix for Toronto listings must be verified against the account/API before

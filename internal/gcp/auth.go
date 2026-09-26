@@ -13,6 +13,18 @@ import (
 type TokenSource interface {
 	Token(context.Context) (string, error)
 }
+
+// StaticTokenSource is used only by the explicit local development mode, with
+// a short-lived user access token. Cloud Run uses MetadataTokenSource instead.
+type StaticTokenSource struct{ AccessToken string }
+
+func (s StaticTokenSource) Token(context.Context) (string, error) {
+	if s.AccessToken == "" {
+		return "", fmt.Errorf("local Google access token is empty")
+	}
+	return s.AccessToken, nil
+}
+
 type MetadataTokenSource struct{ HTTP *http.Client }
 
 func (m MetadataTokenSource) Token(ctx context.Context) (string, error) {

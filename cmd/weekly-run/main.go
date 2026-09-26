@@ -18,17 +18,19 @@ import (
 	"github.com/aayushgogia/stock-research-tool/internal/history"
 	"github.com/aayushgogia/stock-research-tool/internal/judgment"
 	"github.com/aayushgogia/stock-research-tool/internal/llm"
+	"github.com/aayushgogia/stock-research-tool/internal/localenv"
 	"github.com/aayushgogia/stock-research-tool/internal/macro"
 	"github.com/aayushgogia/stock-research-tool/internal/marketdata"
 	"github.com/aayushgogia/stock-research-tool/internal/report"
 	"github.com/aayushgogia/stock-research-tool/internal/watchlist"
 )
 
-type opts struct{ config, project, twelve, fred, deepinfra, smtpSecret, smtpHost, from, to, sheet, sheetRange, model string }
+type opts struct{ config, localEnv, project, twelve, fred, deepinfra, smtpSecret, smtpHost, from, to, sheet, sheetRange, model string }
 
 func main() {
 	var o opts
 	flag.StringVar(&o.config, "watchlist", "watchlist.yaml", "")
+	flag.StringVar(&o.localEnv, "local-env", "", "local-only dotenv file; never use in Cloud Run")
 	flag.StringVar(&o.project, "gcp-project", "", "")
 	flag.StringVar(&o.twelve, "twelve-data-secret", "", "")
 	flag.StringVar(&o.fred, "fred-secret", "", "")
@@ -47,6 +49,12 @@ func main() {
 	}
 }
 func run(ctx context.Context, o opts) error {
+	if o.localEnv != "" {
+		if e := localenv.Load(o.localEnv); e != nil {
+			return e
+		}
+		applyLocalConfig(&o)
+	}
 	if o.project == "" {
 		return fmt.Errorf("--gcp-project required")
 	}
@@ -54,27 +62,36 @@ func run(ctx context.Context, o opts) error {
 	if e != nil {
 		return e
 	}
-	tokens := gcp.MetadataTokenSource{}
+	var tokens gcp.TokenSource = gcp.MetadataTokenSource{}
+	if o.localEnv != "" {
+		tokens = gcp.StaticTokenSource{AccessToken: os.Getenv("GOOGLE_ACCESS_TOKEN")}
+	}
 	sm := gcp.SecretManager{Project: o.project, Tokens: tokens}
-	secret := func(n string) (string, error) {
+	secret := func(n, envName string) (string, error) {
+		if o.localEnv != "" {
+			if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+				return value, nil
+			}
+			return "", fmt.Errorf("%s is required in %s", envName, o.localEnv)
+		}
 		if n == "" {
 			return "", fmt.Errorf("required secret flag missing")
 		}
 		return sm.Access(ctx, n)
 	}
-	td, e := secret(o.twelve)
+	td, e := secret(o.twelve, "TWELVE_DATA_API_KEY")
 	if e != nil {
 		return e
 	}
-	fk, e := secret(o.fred)
+	fk, e := secret(o.fred, "FRED_API_KEY")
 	if e != nil {
 		return e
 	}
-	dk, e := secret(o.deepinfra)
+	dk, e := secret(o.deepinfra, "DEEPINFRA_API_KEY")
 	if e != nil {
 		return e
 	}
-	cred, e := secret(o.smtpSecret)
+	cred, e := secret(o.smtpSecret, "SMTP_CREDENTIAL")
 	if e != nil {
 		return e
 	}
@@ -103,6 +120,22 @@ func run(ctx context.Context, o opts) error {
 	}
 	u, pw := smtpCred(cred)
 	return delivery.SMTP{Host: o.smtpHost, From: o.from, To: o.to, Username: u, Password: pw}.Send("Weekly personal stock watchlist — "+week, report.Render(d))
+}
+
+func applyLocalConfig(o *opts) {
+	set := func(target *string, env string) {
+		if *target == "" {
+			*target = strings.TrimSpace(os.Getenv(env))
+		}
+	}
+	set(&o.project, "GCP_PROJECT")
+	set(&o.smtpHost, "SMTP_HOST")
+	set(&o.from, "MAIL_FROM")
+	set(&o.to, "MAIL_TO")
+	set(&o.sheet, "SHEET_ID")
+	if o.sheetRange == "Sheet1!A:F" {
+		set(&o.sheetRange, "SHEET_RANGE")
+	}
 }
 func ticker(ctx context.Context, md marketdata.Client, p llm.Provider, store history.Store, w config.Watch, week string, mc macro.Context, mb llm.MacroBrief, cond watchlist.MacroConditions, d *report.Digest) error {
 	c, e := md.Daily(ctx, w.Ticker, 300)
