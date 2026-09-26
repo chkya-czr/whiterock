@@ -86,6 +86,30 @@ func (f Firestore) Save(ctx context.Context, s Snapshot) error {
 	}
 	return nil
 }
+
+// Delete removes an explicitly named snapshot. It is used only to clean up a
+// temporary integration-check probe after exercising the Firestore write path.
+func (f Firestore) Delete(ctx context.Context, ticker, week string) error {
+	if f.Project == "" {
+		return fmt.Errorf("Firestore project is required")
+	}
+	req, e := http.NewRequestWithContext(ctx, http.MethodDelete, f.base()+"/"+url.PathEscape(ticker+"_"+week), nil)
+	if e != nil {
+		return e
+	}
+	if e = f.auth(ctx, req); e != nil {
+		return e
+	}
+	r, e := f.client().Do(req)
+	if e != nil {
+		return e
+	}
+	defer r.Body.Close()
+	if r.StatusCode < 200 || r.StatusCode >= 300 {
+		return fmt.Errorf("Firestore delete %s: HTTP %s", ticker, r.Status)
+	}
+	return nil
+}
 func (f Firestore) Previous(ctx context.Context, ticker, week string) (*Snapshot, error) { // Uses a collection query and reads the JSON payload verbatim.
 	if f.Project == "" {
 		return nil, fmt.Errorf("Firestore project is required")

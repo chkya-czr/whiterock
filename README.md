@@ -36,8 +36,9 @@ Secret Manager-independent Firestore and Sheets APIs locally. Do not commit
 
 To check every external dependency before a full run, use
 `scripts/test-integrations.sh .env`. It validates config, Twelve Data, FRED,
-DeepInfra, Secret Manager, Firestore, and Sheets without writing data. Add
-`--send-email` only when you want it to send one real SMTP test email.
+DeepInfra, Secret Manager, Firestore, and Sheets. Its Firestore probe writes
+then deletes one temporary document. Add `--send-email` only when you want it
+to send one real SMTP test email.
 
 `CSU` is intentionally not included as a bare symbol: Twelve Data's exchange
 suffix for Toronto listings must be verified against the account/API before

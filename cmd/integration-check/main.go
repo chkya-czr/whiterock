@@ -70,7 +70,16 @@ func main() {
 	sm := gcp.SecretManager{Project: project, Tokens: token}
 	check("Secret Manager", func() error { _, err := sm.Access(ctx, required("SECRET_MANAGER_TEST_SECRET")); return err })
 	store := history.Firestore{Project: project, Tokens: token}
-	check("Firestore read", func() error { _, err := store.Previous(ctx, "__INTEGRATION_CHECK__", "9999-12-31"); return err })
+	check("Firestore read/write/delete", func() error {
+		week := "probe-" + time.Now().UTC().Format("20060102T150405.000000000")
+		if err := store.Save(ctx, history.Snapshot{Week: week, Ticker: "__INTEGRATION_CHECK__", Price: 0, Status: "PROBE"}); err != nil {
+			return err
+		}
+		if err := store.Delete(ctx, "__INTEGRATION_CHECK__", week); err != nil {
+			return fmt.Errorf("probe was written but cleanup failed: %w", err)
+		}
+		return nil
+	})
 	check("Google Sheets read", func() error {
 		_, err := (judgment.Sheets{ID: required("SHEET_ID"), Range: valueOr("SHEET_RANGE", "Sheet1!A:F"), Tokens: token}).LastWeek(ctx, time.Now().UTC().Format("2006-01-02"))
 		return err
