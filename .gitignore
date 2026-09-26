@@ -1,0 +1,16 @@
+# Local credentials and deployment overrides must never enter source control.
+.env
+.env.*
+!.env.example
+*.token
+*.pem
+*.key
+*service-account*.json
+*credentials*.json
+
+# Local builds, coverage, and editor/OS artifacts.
+/weekly-run
+coverage.out
+.DS_Store
+.idea/
+.vscode/
