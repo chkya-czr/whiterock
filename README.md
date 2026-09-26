@@ -34,6 +34,11 @@ application-default print-access-token`; it lets the program access the same
 Secret Manager-independent Firestore and Sheets APIs locally. Do not commit
 `.env`, and remove this local mode before production deployment.
 
+To check every external dependency before a full run, use
+`scripts/test-integrations.sh .env`. It validates config, Twelve Data, FRED,
+DeepInfra, Secret Manager, Firestore, and Sheets without writing data. Add
+`--send-email` only when you want it to send one real SMTP test email.
+
 `CSU` is intentionally not included as a bare symbol: Twelve Data's exchange
 suffix for Toronto listings must be verified against the account/API before
 adding it to the hand-edited YAML.
