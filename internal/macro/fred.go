@@ -34,7 +34,9 @@ func (f *Fred) Series(ctx context.Context, id string, limit int) ([]Observation,
 	q.Set("series_id", id)
 	q.Set("api_key", f.APIKey)
 	q.Set("file_type", "json")
-	q.Set("sort_order", "asc")
+	// Fetch the most recent window. FRED applies limit after sorting; ascending
+	// order would silently return observations from the start of a long series.
+	q.Set("sort_order", "desc")
 	q.Set("limit", strconv.Itoa(limit))
 	u.RawQuery = q.Encode()
 	req, e := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -50,6 +52,8 @@ func (f *Fred) Series(ctx context.Context, id string, limit int) ([]Observation,
 		return nil, fmt.Errorf("FRED %s: HTTP %s", id, r.Status)
 	}
 	var b struct {
+		ErrorCode    int    `json:"error_code"`
+		ErrorMessage string `json:"error_message"`
 		Observations []struct {
 			Date  string `json:"date"`
 			Value string `json:"value"`
@@ -57,6 +61,9 @@ func (f *Fred) Series(ctx context.Context, id string, limit int) ([]Observation,
 	}
 	if e = json.NewDecoder(r.Body).Decode(&b); e != nil {
 		return nil, e
+	}
+	if b.ErrorMessage != "" {
+		return nil, fmt.Errorf("FRED %s: %s", id, b.ErrorMessage)
 	}
 	out := make([]Observation, 0, len(b.Observations))
 	for _, o := range b.Observations {
@@ -75,6 +82,11 @@ func (f *Fred) Series(ctx context.Context, id string, limit int) ([]Observation,
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("FRED %s: no numeric observations", id)
+	}
+	// The API returned newest first; all downstream trend arithmetic expects
+	// oldest first.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
 	}
 	return out, nil
 }

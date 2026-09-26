@@ -187,17 +187,22 @@ func ticker(ctx context.Context, md marketdata.Client, p llm.Provider, store his
 }
 func macroBrief(ctx context.Context, p llm.Provider, c macro.Context) (llm.MacroBrief, error) {
 	u := fmt.Sprintf("Fed funds %.2f%%; 10Y/2Y %.0f bps (%s); Core PCE YoY %.2f%%; net liquidity %.2fB (%s over 8 weeks, %.2f%%); dollar %.2f (%s over 1 month, %.2f%%); HY spread %.0f bps (%s); VIX %.2f (%s); sector RS: %s.", c.FedFunds, c.CurveSpreadBps, c.CurveState, c.CorePCEYoY, c.NetLiquidityB, c.LiquidityTrend, c.Liquidity8WeekPct, c.Dollar, c.DollarTrend, c.Dollar1MonthPct, c.HYSpreadBps, c.CreditRegime, c.VIX, c.VIXRegime, strings.Join(macro.RankedSectorRS(c.SectorRS), ", "))
-	sys := "Use only supplied numbers. State current macro state/trend only; no forecasts. Return JSON: regime_tag, summary, notable_shifts."
+	sys := "Use only the supplied facts. State current macro state and trend only; no forecasts. Return JSON: regime_tag, summary, notable_shifts. The summary must be three or four sentences. Do not use digits or numeric symbols in any JSON value: refer to measures by name and their supplied qualitative state instead."
 	allowed := nums(c)
+	var lastErr error
 	for i := 0; i < 2; i++ {
-		raw, e := p.Complete(ctx, sys, u)
-		if e == nil {
-			b, e := llm.ParseMacro(raw, allowed)
-			if e == nil {
-				return b, nil
-			}
+		raw, callErr := p.Complete(ctx, sys, u)
+		if callErr != nil {
+			lastErr = callErr
+			continue
 		}
+		b, parseErr := llm.ParseMacro(raw, allowed)
+		if parseErr == nil {
+			return b, nil
+		}
+		lastErr = parseErr
 	}
+	log.Printf("macro LLM rejected; using deterministic fallback: %v", lastErr)
 	return llm.MacroBrief{RegimeTag: "Deterministic macro facts", Summary: u, NotableShifts: "none"}, nil
 }
 func tickerBrief(ctx context.Context, p llm.Provider, w config.Watch, s watchlist.Result, price float64, in marketdata.Indicators, prev *history.Snapshot, mc macro.Context, mb llm.MacroBrief, size string) (llm.TickerBrief, error) {
@@ -208,16 +213,21 @@ func tickerBrief(ctx context.Context, p llm.Provider, w config.Watch, s watchlis
 		allowed = append(allowed, prev.Price)
 	}
 	u := fmt.Sprintf("Ticker %s. Rationale: %q. Deterministic status: %s; exact comparison: %s. Price %.2f. 52-week low %.2f, high %.2f, from high %.2f%%, from low %.2f%%. RSI(14) %.2f; SMA50 %.2f; SMA200 %.2f; weekly %.2f%%; monthly %.2f%%. %s. Position sizing: %s. Macro %s — %s. Sector RS %v.", w.Ticker, w.Rationale, s.Status, s.Comparison, price, in.Low52, in.High52, in.FromHighPct, in.FromLowPct, in.RSI14, in.SMA50, in.SMA200, in.WeekChangePct, in.MonthChangePct, last, size, mb.RegimeTag, mb.Summary, mc.SectorRS)
-	sys := "Use ONLY supplied facts; give no advice or recommendation; never invent numbers/news. Present both cases. Return JSON only: case_for, case_against, change_since_last_week, risk."
+	sys := "Use ONLY supplied facts; give no advice or recommendation; never invent news. Present both cases. Return JSON only: case_for, case_against, change_since_last_week, risk. Do not use digits or numeric symbols in any JSON value: describe supplied facts by name and direction/state instead."
+	var lastErr error
 	for i := 0; i < 2; i++ {
-		raw, e := p.Complete(ctx, sys, u)
-		if e == nil {
-			b, e := llm.ParseTicker(raw, allowed)
-			if e == nil {
-				return b, nil
-			}
+		raw, callErr := p.Complete(ctx, sys, u)
+		if callErr != nil {
+			lastErr = callErr
+			continue
 		}
+		b, parseErr := llm.ParseTicker(raw, allowed)
+		if parseErr == nil {
+			return b, nil
+		}
+		lastErr = parseErr
 	}
+	log.Printf("ticker %s LLM rejected; using deterministic fallback: %v", w.Ticker, lastErr)
 	return llm.TickerBrief{CaseFor: "No validated generated brief is available from the supplied facts.", CaseAgainst: "No validated generated brief is available from the supplied facts.", ChangeSinceLastWeek: "No validated generated comparison is available.", Risk: "The supplied facts may be incomplete."}, nil
 }
 func nums(c macro.Context) []float64 {
