@@ -20,3 +20,14 @@ func TestLoadAllowsNoneTrigger(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestParseAllowsNoneTrigger(t *testing.T) {
+	y := []byte("watchlist:\n  - ticker: AMD\n    held: false\n    trigger: {type: none, value: null}\n    rationale: watch only\n")
+	f, err := Parse(y)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Watchlist[0].Ticker; got != "AMD" {
+		t.Fatalf("ticker = %q", got)
+	}
+}

@@ -26,13 +26,14 @@ import (
 	"github.com/aayushgogia/stock-research-tool/internal/watchlist"
 )
 
-type opts struct{ config, localEnv, project, twelve, fred, deepinfra, smtpSecret, smtpHost, from, to, sheet, sheetRange, model string }
+type opts struct{ config, localEnv, project, watchlistSecret, twelve, fred, deepinfra, smtpSecret, smtpHost, from, to, sheet, sheetRange, model string }
 
 func main() {
 	var o opts
 	flag.StringVar(&o.config, "watchlist", "watchlist.yaml", "")
 	flag.StringVar(&o.localEnv, "local-env", "", "local-only dotenv file; never use in Cloud Run")
 	flag.StringVar(&o.project, "gcp-project", "", "")
+	flag.StringVar(&o.watchlistSecret, "watchlist-secret", "", "Secret Manager secret containing watchlist YAML; required outside local mode")
 	flag.StringVar(&o.twelve, "twelve-data-secret", "", "")
 	flag.StringVar(&o.fred, "fred-secret", "", "")
 	flag.StringVar(&o.deepinfra, "deepinfra-secret", "", "")
@@ -59,16 +60,29 @@ func run(ctx context.Context, o opts) error {
 	if o.project == "" {
 		return fmt.Errorf("--gcp-project required")
 	}
-	cfg, e := config.Load(o.config)
-	if e != nil {
-		return e
-	}
-	log.Printf("weekly run starting: %d watchlist names (local mode=%t)", len(cfg.Watchlist), o.localEnv != "")
 	var tokens gcp.TokenSource = gcp.MetadataTokenSource{}
 	if o.localEnv != "" {
 		tokens = gcp.StaticTokenSource{AccessToken: os.Getenv("GOOGLE_ACCESS_TOKEN")}
 	}
 	sm := gcp.SecretManager{Project: o.project, Tokens: tokens}
+	var cfg config.File
+	var e error
+	if o.localEnv != "" {
+		cfg, e = config.Load(o.config)
+	} else {
+		if o.watchlistSecret == "" {
+			return fmt.Errorf("--watchlist-secret required outside local mode")
+		}
+		var raw string
+		raw, e = sm.Access(ctx, o.watchlistSecret)
+		if e == nil {
+			cfg, e = config.Parse([]byte(raw))
+		}
+	}
+	if e != nil {
+		return e
+	}
+	log.Printf("weekly run starting: %d watchlist names (local mode=%t)", len(cfg.Watchlist), o.localEnv != "")
 	secret := func(n, envName string) (string, error) {
 		if o.localEnv != "" {
 			if value := strings.TrimSpace(os.Getenv(envName)); value != "" {

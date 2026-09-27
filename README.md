@@ -7,19 +7,23 @@ its output is rejected if it introduces a number that cannot be traced to them.
 
 ## Local preparation
 
-1. Copy/edit `watchlist.yaml`; `trigger.type: none` is valid and appears as
-   **Watch only** in the digest.
+1. Copy `watchlist.example.yaml` to the ignored `watchlist.yaml`, then edit
+   it. `trigger.type: none` is valid and appears as **Watch only** in the
+   digest.
 2. Run `go test ./...`.
 3. Build with `go build ./cmd/weekly-run`.
-4. Run inside Cloud Run Job with a service account granted Secret Manager
-   Secret Accessor, Firestore user, and Sheets Viewer to the relevant sheet.
+4. Before deployment, upload the real local file as the `watchlist-yaml`
+   Secret Manager secret: `gcloud secrets versions add watchlist-yaml
+   --data-file=watchlist.yaml`. Run inside Cloud Run Job with a service
+   account granted Secret Manager Secret Accessor, Firestore user, and Sheets
+   Viewer to the relevant sheet.
    The executable obtains an access token from the Cloud Run metadata service;
    credentials are not read from environment variables.
 
-The job accepts non-secret deployment settings as flags. Its API keys and SMTP
-password are read by name from Secret Manager. `--smtp-credential-secret` must
-contain `username:password` (or a password alone). The project uses raw Google
-REST APIs to remain a single static binary.
+The job accepts non-secret deployment settings as flags. Its watchlist, API
+keys, and SMTP password are read by name from Secret Manager.
+`--smtp-credential-secret` must contain `username:password` (or a password
+alone). The project uses raw Google REST APIs to remain a single static binary.
 
 `deploy/cloudrun-job.sh` is a deployment template. Cloud Scheduler should POST
 weekly to the Job's `:run` endpoint with an OAuth service account holding

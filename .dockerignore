@@ -9,3 +9,4 @@
 *.key
 *service-account*.json
 *credentials*.json
+watchlist.yaml

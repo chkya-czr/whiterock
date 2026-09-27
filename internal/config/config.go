@@ -36,6 +36,12 @@ func Load(path string) (File, error) {
 	if err != nil {
 		return File{}, fmt.Errorf("read watchlist: %w", err)
 	}
+	return Parse(b)
+}
+
+// Parse validates a watchlist obtained from a trusted source, including Secret
+// Manager in production. It shares exactly the same validation as file loading.
+func Parse(b []byte) (File, error) {
 	var f File
 	if err := yaml.Unmarshal(b, &f); err != nil {
 		return File{}, fmt.Errorf("parse watchlist: %w", err)

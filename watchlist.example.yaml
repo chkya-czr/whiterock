@@ -1,0 +1,10 @@
+# Public, non-personal example only. Copy this to the ignored watchlist.yaml
+# for local use; upload the real file as the watchlist-yaml Secret Manager secret.
+watchlist:
+  - ticker: EXAMPLE
+    held: false
+    trigger:
+      type: none
+      value: null
+    macro_precondition: null
+    rationale: "Example watch-only entry; replace with your private rationale."

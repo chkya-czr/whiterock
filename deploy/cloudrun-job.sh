@@ -12,6 +12,6 @@ set -euo pipefail
 gcloud run jobs deploy stock-watchlist-weekly \
   --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" \
   --service-account="$SERVICE_ACCOUNT" --tasks=1 --max-retries=0 --task-timeout=45m \
-  --args="--gcp-project=$PROJECT_ID,--twelve-data-secret=twelve-data-api-key,--fred-secret=fred-api-key,--deepinfra-secret=deepinfra-api-key,--smtp-credential-secret=smtp-credential,--smtp-host=$SMTP_HOST,--mail-from=$MAIL_FROM,--mail-to=$MAIL_TO,--sheet-id=$SHEET_ID"
+  --args="--gcp-project=$PROJECT_ID,--watchlist-secret=watchlist-yaml,--twelve-data-secret=twelve-data-api-key,--fred-secret=fred-api-key,--deepinfra-secret=deepinfra-api-key,--smtp-credential-secret=smtp-credential,--smtp-host=$SMTP_HOST,--mail-from=$MAIL_FROM,--mail-to=$MAIL_TO,--sheet-id=$SHEET_ID"
 # Cloud Scheduler should POST weekly to this Job's :run URL using an OIDC
 # service account with run.jobs.run permission.
