@@ -34,6 +34,10 @@ application-default print-access-token`; it lets the program access the same
 Secret Manager-independent Firestore and Sheets APIs locally. Do not commit
 `.env`, and remove this local mode before production deployment.
 
+The default LLM is the pinned DeepInfra release
+`deepseek-ai/DeepSeek-V4-Pro-0813`. Set `LLM_MODEL` in `.env` or pass
+`--llm-model` only when intentionally overriding it.
+
 To check every external dependency before a full run, use
 `scripts/test-integrations.sh .env`. It validates config, Twelve Data, FRED,
 DeepInfra, Secret Manager, Firestore, and Sheets. Its Firestore probe writes

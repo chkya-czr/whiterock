@@ -10,3 +10,14 @@ func TestRejectsHallucinatedNumber(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestParseMacroAcceptsNotableShiftArray(t *testing.T) {
+	raw := `{"regime_tag":"steady conditions","summary":"Conditions are stable.","notable_shifts":["Credit remains tight."]}`
+	v, err := ParseMacro(raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.NotableShifts != "Credit remains tight." {
+		t.Fatalf("got %q", v.NotableShifts)
+	}
+}

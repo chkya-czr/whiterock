@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -41,7 +42,7 @@ func main() {
 	flag.StringVar(&o.to, "mail-to", "", "")
 	flag.StringVar(&o.sheet, "sheet-id", "", "")
 	flag.StringVar(&o.sheetRange, "sheet-range", "Sheet1!A:F", "")
-	flag.StringVar(&o.model, "llm-model", "deepseek-ai/DeepSeek-V3.2", "")
+	flag.StringVar(&o.model, "llm-model", "deepseek-ai/DeepSeek-V4-Pro-0813", "")
 	flag.Parse()
 	if e := run(context.Background(), o); e != nil {
 		log.Printf("FAILED: %v", e)
@@ -62,6 +63,7 @@ func run(ctx context.Context, o opts) error {
 	if e != nil {
 		return e
 	}
+	log.Printf("weekly run starting: %d watchlist names (local mode=%t)", len(cfg.Watchlist), o.localEnv != "")
 	var tokens gcp.TokenSource = gcp.MetadataTokenSource{}
 	if o.localEnv != "" {
 		tokens = gcp.StaticTokenSource{AccessToken: os.Getenv("GOOGLE_ACCESS_TOKEN")}
@@ -100,26 +102,40 @@ func run(ctx context.Context, o opts) error {
 	if e != nil {
 		return fmt.Errorf("macro: %w", e)
 	}
+	log.Printf("macro data fetched: VIX regime=%s, credit=%s, liquidity=%s", mc.VIXRegime, mc.CreditRegime, mc.LiquidityTrend)
 	p := llm.NewDeepInfra(strings.TrimSpace(dk), o.model)
 	mb, e := macroBrief(ctx, p, mc)
 	if e != nil {
 		return e
 	}
+	log.Printf("macro brief ready: %s", mb.RegimeTag)
 	week := time.Now().UTC().Format("2006-01-02")
 	store := history.Firestore{Project: o.project, Tokens: tokens}
 	j, e := judgment.Sheets{ID: o.sheet, Range: o.sheetRange, Tokens: tokens}.LastWeek(ctx, time.Now().UTC().AddDate(0, 0, -7).Format("2006-01-02"))
 	if e != nil {
 		return e
 	}
-	d := report.Digest{Week: week, Macro: mb.Summary, Judgments: j}
+	d := report.Digest{Week: week, MacroSummary: mb.Summary, MacroDetails: macroDetails(mc), MacroNotable: mb.NotableShifts, Judgments: j}
 	cond := watchlist.MacroConditions{DollarWeak: mc.Dollar1MonthPct < 0, SectorOutperforming: positive(mc.SectorRS), RiskOn: mc.VIXRegime == "low" && mc.CreditRegime == "tight"}
 	for _, w := range cfg.Watchlist {
 		if e := ticker(ctx, md, p, store, w, week, mc, mb, cond, &d); e != nil {
 			return e
 		}
 	}
+	sort.SliceStable(d.Pulse, func(i, j int) bool {
+		if d.Pulse[i].Status != d.Pulse[j].Status {
+			return d.Pulse[i].Status == string(watchlist.Quiet)
+		}
+		return d.Pulse[i].Ticker < d.Pulse[j].Ticker
+	})
+	d.PulseSummary = pulseBrief(ctx, p, d.Pulse)
+	log.Printf("watchlist buckets: %d triggered, %d approaching, %d pulse names", len(d.Triggered), len(d.Approaching), len(d.Pulse))
 	u, pw := smtpCred(cred)
-	return delivery.SMTP{Host: o.smtpHost, From: o.from, To: o.to, Username: u, Password: pw}.Send("Weekly personal stock watchlist — "+week, report.Render(d))
+	if e := (delivery.SMTP{Host: o.smtpHost, From: o.from, To: o.to, Username: u, Password: pw}).Send("Weekly personal stock watchlist — "+week, report.Render(d)); e != nil {
+		return e
+	}
+	log.Printf("weekly run complete: digest delivered")
+	return nil
 }
 
 func applyLocalConfig(o *opts) {
@@ -133,6 +149,9 @@ func applyLocalConfig(o *opts) {
 	set(&o.from, "MAIL_FROM")
 	set(&o.to, "MAIL_TO")
 	set(&o.sheet, "SHEET_ID")
+	if o.model == "deepseek-ai/DeepSeek-V4-Pro-0813" {
+		set(&o.model, "LLM_MODEL")
+	}
 	if o.sheetRange == "Sheet1!A:F" {
 		set(&o.sheetRange, "SHEET_RANGE")
 	}
@@ -143,11 +162,24 @@ func ticker(ctx context.Context, md marketdata.Client, p llm.Provider, store his
 		return fmt.Errorf("%s market data: %w", w.Ticker, e)
 	}
 	in, e := marketdata.Compute(c)
+	partialHistory := false
 	if e != nil {
-		return e
+		if w.Trigger.Type != "none" {
+			return fmt.Errorf("%s indicators: %w", w.Ticker, e)
+		}
+		in, e = marketdata.ComputePulse(c)
+		if e != nil {
+			return fmt.Errorf("%s watch-only pulse: %w", w.Ticker, e)
+		}
+		partialHistory = true
 	}
 	price := c[len(c)-1].Close
 	status := watchlist.Evaluate(w, price, in, cond)
+	if partialHistory {
+		log.Printf("ticker %s: %s (watch-only, partial history: %d sessions)", w.Ticker, status.Status, in.HistorySessions)
+	} else {
+		log.Printf("ticker %s: %s", w.Ticker, status.Status)
+	}
 	size := watchlist.CheckSizing(w)
 	prev, e := store.Previous(ctx, w.Ticker, week)
 	if e != nil {
@@ -161,7 +193,10 @@ func ticker(ctx context.Context, md marketdata.Client, p llm.Provider, store his
 		Sizing     string
 	}{price, in, status.Comparison, prev, size.Description}
 	fb, _ := json.Marshal(facts)
-	macroJSON, _ := json.Marshal(mc)
+	macroJSON, _ := json.Marshal(struct {
+		Context macro.Context  `json:"context"`
+		Brief   llm.MacroBrief `json:"brief"`
+	}{mc, mb})
 	var out json.RawMessage
 	brief := ""
 	if status.Status != watchlist.Quiet {
@@ -180,10 +215,46 @@ func ticker(ctx context.Context, md marketdata.Client, p llm.Provider, store his
 		d.Triggered = append(d.Triggered, item)
 	} else if status.Status == watchlist.Approaching {
 		d.Approaching = append(d.Approaching, item)
-	} else if status.WatchOnly {
-		d.WatchOnly = append(d.WatchOnly, item)
+	} else {
+		pulseStatus := string(status.Status)
+		if status.WatchOnly {
+			pulseStatus = "WATCH-ONLY-NO-RULE"
+			d.WatchOnly = append(d.WatchOnly, item)
+		}
+		d.Pulse = append(d.Pulse, report.PulseItem{Ticker: w.Ticker, Status: pulseStatus, Price: price, WeekChangePct: in.WeekChangePct, MonthChangePct: in.MonthChangePct, RSI14: in.RSI14})
 	}
 	return nil
+}
+
+func macroDetails(c macro.Context) string {
+	return fmt.Sprintf("Fed funds %.2f%% · 10Y/2Y %.0fbps (%s) · Core PCE %.2f%% · net liquidity %+.2f%% (8wk) · dollar %+.2f%% (1mo) · HY spread %.0fbps (%s) · VIX %.2f (%s)", c.FedFunds, c.CurveSpreadBps, c.CurveState, c.CorePCEYoY, c.Liquidity8WeekPct, c.Dollar1MonthPct, c.HYSpreadBps, c.CreditRegime, c.VIX, c.VIXRegime)
+}
+
+func pulseBrief(ctx context.Context, p llm.Provider, items []report.PulseItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	facts := make([]llm.PulseFact, 0, len(items))
+	for _, item := range items {
+		facts = append(facts, llm.PulseFact{Ticker: item.Ticker, Status: item.Status, Price: item.Price, WeekChangePct: item.WeekChangePct, MonthChangePct: item.MonthChangePct, RSI14: item.RSI14})
+	}
+	system, user, allowed := llm.PulsePrompt(facts)
+	var lastErr error
+	for i := 0; i < 2; i++ {
+		raw, callErr := p.Complete(ctx, system, user)
+		if callErr != nil {
+			lastErr = callErr
+			continue
+		}
+		brief, parseErr := llm.ParsePulse(raw, allowed)
+		if parseErr == nil {
+			log.Printf("watchlist pulse summary ready")
+			return brief.PulseSummary
+		}
+		lastErr = parseErr
+	}
+	log.Printf("watchlist pulse LLM rejected; rendering deterministic pulse only: %v", lastErr)
+	return ""
 }
 func macroBrief(ctx context.Context, p llm.Provider, c macro.Context) (llm.MacroBrief, error) {
 	u := fmt.Sprintf("Fed funds %.2f%%; 10Y/2Y %.0f bps (%s); Core PCE YoY %.2f%%; net liquidity %.2fB (%s over 8 weeks, %.2f%%); dollar %.2f (%s over 1 month, %.2f%%); HY spread %.0f bps (%s); VIX %.2f (%s); sector RS: %s.", c.FedFunds, c.CurveSpreadBps, c.CurveState, c.CorePCEYoY, c.NetLiquidityB, c.LiquidityTrend, c.Liquidity8WeekPct, c.Dollar, c.DollarTrend, c.Dollar1MonthPct, c.HYSpreadBps, c.CreditRegime, c.VIX, c.VIXRegime, strings.Join(macro.RankedSectorRS(c.SectorRS), ", "))

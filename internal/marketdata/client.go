@@ -67,7 +67,13 @@ func (c *TwelveData) Daily(ctx context.Context, symbol string, outputSize int) (
 	q := u.Query()
 	q.Set("symbol", symbol)
 	q.Set("interval", "1day")
-	q.Set("outputsize", strconv.Itoa(outputSize))
+	// Twelve Data recommends a start/end range (without outputsize) for
+	// historical windows. Request roughly twice the desired sessions in calendar
+	// days so weekends and market holidays do not leave SMA/52-week math short.
+	end := time.Now().UTC().Format("2006-01-02")
+	start := time.Now().UTC().AddDate(0, 0, -(outputSize * 2)).Format("2006-01-02")
+	q.Set("start_date", start)
+	q.Set("end_date", end)
 	q.Set("apikey", c.APIKey)
 	q.Set("format", "JSON")
 	u.RawQuery = q.Encode()

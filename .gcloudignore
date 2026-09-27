@@ -1,0 +1,4 @@
+# Keep local credentials and VCS data out of the Cloud Build source archive.
+.gcloudignore
+.git
+#!include:.gitignore

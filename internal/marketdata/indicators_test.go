@@ -13,3 +13,20 @@ func TestSMAAndRSI(t *testing.T) {
 		t.Fatalf("RSI=%v %v", r, err)
 	}
 }
+
+func TestComputePulseAllowsPartialHistory(t *testing.T) {
+	c := make([]Candle, 74)
+	for i := range c {
+		c[i].Close = float64(i + 1)
+	}
+	got, err := ComputePulse(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FullHistory || got.HistorySessions != 74 {
+		t.Fatalf("unexpected history metadata: %+v", got)
+	}
+	if got.SMA50 != 0 || got.SMA200 != 0 || got.High52 != 0 || got.Low52 != 0 {
+		t.Fatalf("partial pulse must not provide full-history measures: %+v", got)
+	}
+}

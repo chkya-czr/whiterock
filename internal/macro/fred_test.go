@@ -25,6 +25,24 @@ func TestSeriesFetchesRecentValuesAndReturnsChronologicalOrder(t *testing.T) {
 	}
 }
 
+func TestSeriesRetriesTransientGatewayFailure(t *testing.T) {
+	calls := 0
+	client := &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			return &http.Response{StatusCode: http.StatusBadGateway, Status: "502 Bad Gateway", Body: io.NopCloser(strings.NewReader("upstream unavailable")), Header: make(http.Header)}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"observations":[{"date":"2026-01-01","value":"1"}]}`)), Header: make(http.Header)}, nil
+	})}
+	f := &Fred{APIKey: "test", HTTP: client, BaseURL: "https://fred.test"}
+	if _, err := f.Series(context.Background(), "TEST", 1); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("got %d calls, want 2", calls)
+	}
+}
+
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

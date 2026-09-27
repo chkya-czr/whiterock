@@ -22,7 +22,7 @@ type DeepInfra struct {
 
 func NewDeepInfra(key, model string) *DeepInfra {
 	if model == "" {
-		model = "deepseek-ai/DeepSeek-V3.2"
+		model = "deepseek-ai/DeepSeek-V4-Pro-0813"
 	}
 	return &DeepInfra{APIKey: key, Model: model, BaseURL: "https://api.deepinfra.com/v1/openai/chat/completions", HTTP: &http.Client{Timeout: 60 * time.Second}}
 }

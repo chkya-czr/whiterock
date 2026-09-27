@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 type TickerBrief struct {
@@ -58,9 +59,25 @@ func ParseTicker(raw string, allowed []float64) (TickerBrief, error) {
 	return v, nil
 }
 func ParseMacro(raw string, allowed []float64) (MacroBrief, error) {
-	var v MacroBrief
-	if e := json.Unmarshal([]byte(raw), &v); e != nil {
-		return v, fmt.Errorf("invalid macro JSON: %w", e)
+	var wire struct {
+		RegimeTag string          `json:"regime_tag"`
+		Summary   string          `json:"summary"`
+		Notable   json.RawMessage `json:"notable_shifts"`
+	}
+	if e := json.Unmarshal([]byte(raw), &wire); e != nil {
+		return MacroBrief{}, fmt.Errorf("invalid macro JSON: %w", e)
+	}
+	v := MacroBrief{RegimeTag: wire.RegimeTag, Summary: wire.Summary}
+	if e := json.Unmarshal(wire.Notable, &v.NotableShifts); e != nil {
+		var shifts []string
+		if arrayErr := json.Unmarshal(wire.Notable, &shifts); arrayErr != nil {
+			return v, fmt.Errorf("invalid macro notable_shifts: %w", e)
+		}
+		if len(shifts) == 0 {
+			v.NotableShifts = "none"
+		} else {
+			v.NotableShifts = strings.Join(shifts, "; ")
+		}
 	}
 	if v.RegimeTag == "" || v.Summary == "" || v.NotableShifts == "" {
 		return v, fmt.Errorf("macro JSON has missing required text")

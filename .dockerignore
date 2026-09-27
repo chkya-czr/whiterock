@@ -1,3 +1,11 @@
 .git
 .DS_Store
 **/*_test.go
+.env
+.env.*
+!.env.example
+*.token
+*.pem
+*.key
+*service-account*.json
+*credentials*.json
