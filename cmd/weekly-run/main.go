@@ -125,7 +125,8 @@ func run(ctx context.Context, o opts) error {
 	log.Printf("macro brief ready: %s", mb.RegimeTag)
 	week := time.Now().UTC().Format("2006-01-02")
 	store := history.Firestore{Project: o.project, Tokens: tokens}
-	j, e := judgment.Sheets{ID: o.sheet, Range: o.sheetRange, Tokens: tokens}.LastWeek(ctx, time.Now().UTC().AddDate(0, 0, -7).Format("2006-01-02"))
+	judgmentSheet := judgment.Sheets{ID: o.sheet, Range: o.sheetRange, Tokens: tokens}
+	j, e := judgmentSheet.LastWeek(ctx, time.Now().UTC().AddDate(0, 0, -7).Format("2006-01-02"))
 	if e != nil {
 		return e
 	}
@@ -144,6 +145,7 @@ func run(ctx context.Context, o opts) error {
 	})
 	d.PulseSummary = pulseBrief(ctx, p, d.Pulse)
 	log.Printf("watchlist buckets: %d triggered, %d approaching, %d pulse names", len(d.Triggered), len(d.Approaching), len(d.Pulse))
+	syncJudgmentLog(ctx, judgmentSheet, week, d)
 	u, pw := smtpCred(cred)
 	if e := (delivery.SMTP{Host: o.smtpHost, From: o.from, To: o.to, Username: u, Password: pw}).Send("Weekly personal stock watchlist — "+week, report.Render(d)); e != nil {
 		return e
@@ -238,6 +240,29 @@ func ticker(ctx context.Context, md marketdata.Client, p llm.Provider, store his
 		d.Pulse = append(d.Pulse, report.PulseItem{Ticker: w.Ticker, Status: pulseStatus, Price: price, WeekChangePct: in.WeekChangePct, MonthChangePct: in.MonthChangePct, RSI14: in.RSI14})
 	}
 	return nil
+}
+
+// syncJudgmentLog appends a blank decision-log row for each newly triggered
+// or approaching ticker this run. It is a nice-to-have layer on top of
+// Firestore, which remains the source of truth regardless of outcome here,
+// so failures are logged and never block the email send.
+func syncJudgmentLog(ctx context.Context, sheet judgment.Writer, week string, d report.Digest) {
+	var rows []judgment.Row
+	for _, item := range d.Triggered {
+		rows = append(rows, judgment.Row{Week: week, Ticker: item.Ticker, Status: "TRIGGERED", SummaryRef: "firestore:" + item.Ticker + "_" + week})
+	}
+	for _, item := range d.Approaching {
+		rows = append(rows, judgment.Row{Week: week, Ticker: item.Ticker, Status: "APPROACHING", SummaryRef: "firestore:" + item.Ticker + "_" + week})
+	}
+	if len(rows) == 0 {
+		return
+	}
+	log.Printf("judgment log sync: attempting %d row(s)", len(rows))
+	if e := sheet.Sync(ctx, rows); e != nil {
+		log.Printf("judgment log sync failed (non-blocking): %v", e)
+		return
+	}
+	log.Printf("judgment log sync complete")
 }
 
 func macroDetails(c macro.Context) string {
