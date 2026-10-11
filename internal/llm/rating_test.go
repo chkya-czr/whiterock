@@ -53,3 +53,10 @@ func TestRatingValidatorAllowsYearAndQuarterLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRatingValidatorAllowsDashedYearRange(t *testing.T) {
+	raw := `{"rating":"WAIT","confidence":"LOW","summary":"the 2027-2028 context","case_for":"price 10","case_against":"price 10","drivers":[],"would_change_if":"Q4 2028","change_since_last_week":"changed"}`
+	if _, err := ParseRating(raw, []string{"WAIT"}, []Evidence{{ID: "F1", Text: "price 10"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+}

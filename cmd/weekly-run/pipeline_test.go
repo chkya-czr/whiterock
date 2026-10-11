@@ -27,6 +27,16 @@ func (p staticProvider) Complete(context.Context, string, string) (string, error
 	return p.response, nil
 }
 
+type retryProvider struct{ users []string }
+
+func (p *retryProvider) Complete(_ context.Context, _ string, user string) (string, error) {
+	p.users = append(p.users, user)
+	if len(p.users) == 1 {
+		return `{"rating":"WAIT","confidence":"LOW","summary":"price 11","case_for":"price 10","case_against":"price 10","drivers":[],"would_change_if":"facts","change_since_last_week":"changed"}`, nil
+	}
+	return `{"rating":"WAIT","confidence":"LOW","summary":"facts","case_for":"facts","case_against":"facts","drivers":[],"would_change_if":"facts","change_since_last_week":"changed"}`, nil
+}
+
 func TestSaveSnapshotCarriesDecisionRatingAndEvidence(t *testing.T) {
 	store := &captureStore{}
 	f := tickerFact{
@@ -74,5 +84,16 @@ func TestRateCapsHighConfidenceWhenNewsIsUnavailable(t *testing.T) {
 	}
 	if rating.Confidence != "MEDIUM" {
 		t.Fatalf("confidence=%s, want MEDIUM", rating.Confidence)
+	}
+}
+
+func TestRateGivesRetryValidatorFeedback(t *testing.T) {
+	f := tickerFact{w: config.Watch{Ticker: "AMD", Rationale: "watch", NewsQuery: "AMD", Trigger: config.Trigger{Type: "none"}}, price: 10, ind: marketdata.Indicators{RSI14: 40, WeekChangePct: 1, MonthChangePct: 2, HistorySessions: 74}}
+	p := &retryProvider{}
+	if _, err := rate(context.Background(), p, f, config.File{Rating: config.Rating{Horizon: "6-12 months"}}, macro.Context{}, llm.MacroBrief{}, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.users) != 2 || !strings.Contains(p.users[1], "prior JSON was rejected") {
+		t.Fatalf("retry feedback not supplied: %#v", p.users)
 	}
 }

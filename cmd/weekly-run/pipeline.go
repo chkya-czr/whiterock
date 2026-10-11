@@ -432,7 +432,11 @@ func rate(ctx context.Context, p llm.Provider, f tickerFact, cfg config.File, mc
 	sys, user := llm.RatingPrompt(f.w.Ticker, f.w.NewsQuery, cfg.Rating.Horizon, f.w.Rationale, positionText(f), prev, allowed, e)
 	var last error
 	for i := 0; i < 2; i++ {
-		raw, err := p.Complete(ctx, sys, user)
+		attemptUser := user
+		if last != nil {
+			attemptUser += "\nYour prior JSON was rejected because: " + last.Error() + ". Repair that issue. Return no unsupported numerals; use words when possible."
+		}
+		raw, err := p.Complete(ctx, sys, attemptUser)
 		if err != nil {
 			last = err
 			continue
