@@ -133,7 +133,7 @@ func run(ctx context.Context, o opts) error {
 	d := report.Digest{Week: week, MacroSummary: mb.Summary, MacroDetails: macroDetails(mc), MacroNotable: mb.NotableShifts, Judgments: j}
 	cond := watchlist.MacroConditions{DollarWeak: mc.Dollar1MonthPct < 0, SectorOutperforming: positive(mc.SectorRS), RiskOn: mc.VIXRegime == "low" && mc.CreditRegime == "tight"}
 	for _, w := range cfg.Watchlist {
-		if e := ticker(ctx, md, p, store, w, week, mc, mb, cond, &d); e != nil {
+		if e := ticker(ctx, md, p, store, w, cfg.Attention, week, mc, mb, cond, &d); e != nil {
 			return e
 		}
 	}
@@ -172,8 +172,8 @@ func applyLocalConfig(o *opts) {
 		set(&o.sheetRange, "SHEET_RANGE")
 	}
 }
-func ticker(ctx context.Context, md marketdata.Client, p llm.Provider, store history.Store, w config.Watch, week string, mc macro.Context, mb llm.MacroBrief, cond watchlist.MacroConditions, d *report.Digest) error {
-	c, e := md.Daily(ctx, w.Ticker, 300)
+func ticker(ctx context.Context, md marketdata.Client, p llm.Provider, store history.Store, w config.Watch, attention config.Attention, week string, mc macro.Context, mb llm.MacroBrief, cond watchlist.MacroConditions, d *report.Digest) error {
+	c, e := md.Daily(ctx, w.Ticker, 260)
 	if e != nil {
 		return fmt.Errorf("%s market data: %w", w.Ticker, e)
 	}
@@ -190,6 +190,10 @@ func ticker(ctx context.Context, md marketdata.Client, p llm.Provider, store his
 		partialHistory = true
 	}
 	price := c[len(c)-1].Close
+	events, skippedRules := watchlist.Attention(w.Ticker, c, attention)
+	for _, rule := range skippedRules {
+		log.Printf("ticker %s: insufficient history for attention rule %s", w.Ticker, rule)
+	}
 	status := watchlist.Evaluate(w, price, in, cond)
 	if partialHistory {
 		log.Printf("ticker %s: %s (watch-only, partial history: %d sessions)", w.Ticker, status.Status, in.HistorySessions)
@@ -204,10 +208,11 @@ func ticker(ctx context.Context, md marketdata.Client, p llm.Provider, store his
 	facts := struct {
 		Price      float64
 		Indicators marketdata.Indicators
+		Attention  []watchlist.AttentionEvent
 		Comparison string
 		Previous   *history.Snapshot
 		Sizing     string
-	}{price, in, status.Comparison, prev, size.Description}
+	}{price, in, events, status.Comparison, prev, size.Description}
 	fb, _ := json.Marshal(facts)
 	macroJSON, _ := json.Marshal(struct {
 		Context macro.Context  `json:"context"`

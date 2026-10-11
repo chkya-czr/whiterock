@@ -8,7 +8,7 @@ import (
 
 func TestLoadAllowsNoneTrigger(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "watchlist.yaml")
-	y := "watchlist:\n  - ticker: AMD\n    held: false\n    trigger: {type: none, value: null}\n    rationale: watch only\n"
+	y := "watchlist:\n  - ticker: AMD\n    held: false\n    trigger: {type: none, value: null}\n    rationale: watch only\n    news_query: Advanced Micro Devices\n"
 	if err := os.WriteFile(p, []byte(y), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +22,7 @@ func TestLoadAllowsNoneTrigger(t *testing.T) {
 }
 
 func TestParseAllowsNoneTrigger(t *testing.T) {
-	y := []byte("watchlist:\n  - ticker: AMD\n    held: false\n    trigger: {type: none, value: null}\n    rationale: watch only\n")
+	y := []byte("watchlist:\n  - ticker: AMD\n    held: false\n    trigger: {type: none, value: null}\n    rationale: watch only\n    news_query: Advanced Micro Devices\n")
 	f, err := Parse(y)
 	if err != nil {
 		t.Fatal(err)

@@ -1,3 +1,18 @@
+attention:
+  pct_below_52w_high: 15
+  rsi_low: 30
+  rsi_high: 70
+  weekly_move_pct: 8
+  sma200_cross: true
+  new_52w_extreme: true
+  approaching_band_pct: 5
+rating:
+  horizon: "6-12 months"
+news:
+  window_days: 7
+  num_results: 5
+  domains: [reuters.com, bloomberg.com, cnbc.com, ft.com, wsj.com, barrons.com, marketwatch.com, sec.gov]
+
 # Public, non-personal example only. Copy this to the ignored watchlist.yaml
 # for local use; upload the real file as the watchlist-yaml Secret Manager secret.
 watchlist:
@@ -6,5 +21,5 @@ watchlist:
     trigger:
       type: none
       value: null
-    macro_precondition: null
     rationale: "Example watch-only entry; replace with your private rationale."
+    news_query: "Example Company"

@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
@@ -10,7 +11,30 @@ import (
 )
 
 type File struct {
-	Watchlist []Watch `yaml:"watchlist"`
+	Attention Attention `yaml:"attention"`
+	Rating    Rating    `yaml:"rating"`
+	News      News      `yaml:"news"`
+	Watchlist []Watch   `yaml:"watchlist"`
+}
+
+type Attention struct {
+	PctBelow52WHigh float64 `yaml:"pct_below_52w_high"`
+	RSILow          float64 `yaml:"rsi_low"`
+	RSIHigh         float64 `yaml:"rsi_high"`
+	WeeklyMovePct   float64 `yaml:"weekly_move_pct"`
+	SMA200Cross     bool    `yaml:"sma200_cross"`
+	New52WExtreme   bool    `yaml:"new_52w_extreme"`
+	ApproachingBand float64 `yaml:"approaching_band_pct"`
+}
+
+type Rating struct {
+	Horizon string `yaml:"horizon"`
+}
+
+type News struct {
+	WindowDays int      `yaml:"window_days"`
+	NumResults int      `yaml:"num_results"`
+	Domains    []string `yaml:"domains"`
 }
 
 type Watch struct {
@@ -21,6 +45,7 @@ type Watch struct {
 	Trigger            Trigger  `yaml:"trigger"`
 	MacroPrecondition  *string  `yaml:"macro_precondition"`
 	Rationale          string   `yaml:"rationale"`
+	NewsQuery          string   `yaml:"news_query"`
 }
 
 type Trigger struct {
@@ -46,6 +71,10 @@ func Parse(b []byte) (File, error) {
 	if err := yaml.Unmarshal(b, &f); err != nil {
 		return File{}, fmt.Errorf("parse watchlist: %w", err)
 	}
+	applyDefaults(&f)
+	if err := f.Validate(); err != nil {
+		return File{}, err
+	}
 	if len(f.Watchlist) == 0 {
 		return File{}, fmt.Errorf("watchlist must contain at least one entry")
 	}
@@ -53,6 +82,14 @@ func Parse(b []byte) (File, error) {
 	for i := range f.Watchlist {
 		w := &f.Watchlist[i]
 		w.Ticker = strings.ToUpper(strings.TrimSpace(w.Ticker))
+		if w.MacroPrecondition != nil {
+			log.Printf("WARNING: watchlist[%d] (%s): macro_precondition is ignored", i, w.Ticker)
+			w.MacroPrecondition = nil
+		}
+		if w.Trigger.Type == "qualitative" {
+			log.Printf("WARNING: watchlist[%d] (%s): qualitative trigger is ignored and treated as none", i, w.Ticker)
+			w.Trigger = Trigger{Type: "none"}
+		}
 		if err := w.Validate(); err != nil {
 			return File{}, fmt.Errorf("watchlist[%d] (%s): %w", i, w.Ticker, err)
 		}
@@ -62,6 +99,32 @@ func Parse(b []byte) (File, error) {
 		seen[w.Ticker] = true
 	}
 	return f, nil
+}
+
+func applyDefaults(f *File) {
+	if f.Attention == (Attention{}) {
+		f.Attention = Attention{PctBelow52WHigh: 15, RSILow: 30, RSIHigh: 70, WeeklyMovePct: 8, SMA200Cross: true, New52WExtreme: true, ApproachingBand: 5}
+	}
+	if f.Rating.Horizon == "" {
+		f.Rating.Horizon = "6-12 months"
+	}
+	if f.News.WindowDays == 0 && f.News.NumResults == 0 && len(f.News.Domains) == 0 {
+		f.News = News{WindowDays: 7, NumResults: 5, Domains: []string{"reuters.com", "bloomberg.com", "cnbc.com", "ft.com", "wsj.com", "barrons.com", "marketwatch.com", "sec.gov"}}
+	}
+}
+
+func (f File) Validate() error {
+	a := f.Attention
+	if a.PctBelow52WHigh <= 0 || a.RSILow < 0 || a.RSIHigh > 100 || a.RSILow >= a.RSIHigh || a.WeeklyMovePct <= 0 || a.ApproachingBand <= 0 {
+		return fmt.Errorf("invalid attention configuration")
+	}
+	if strings.TrimSpace(f.Rating.Horizon) == "" {
+		return fmt.Errorf("rating.horizon is required")
+	}
+	if f.News.WindowDays <= 0 || f.News.NumResults <= 0 || len(f.News.Domains) == 0 {
+		return fmt.Errorf("news.window_days, news.num_results, and news.domains are required")
+	}
+	return nil
 }
 
 func (w Watch) Validate() error {
@@ -80,9 +143,8 @@ func (w Watch) Validate() error {
 	if w.PositionPct != nil && w.PositionCeilingPct != nil && *w.PositionPct > *w.PositionCeilingPct {
 		return fmt.Errorf("position_pct cannot exceed position_ceiling_pct")
 	}
-	validMacro := map[string]bool{"": true, "dollar_weak": true, "sector_outperforming": true, "risk_on": true}
-	if w.MacroPrecondition != nil && !validMacro[*w.MacroPrecondition] {
-		return fmt.Errorf("unknown macro_precondition %q", *w.MacroPrecondition)
+	if strings.TrimSpace(w.NewsQuery) == "" {
+		return fmt.Errorf("news_query is required")
 	}
 	switch w.Trigger.Type {
 	case "none":
@@ -94,10 +156,6 @@ func (w Watch) Validate() error {
 	case "price_above_pct_from_entry":
 		if w.Trigger.Entry == nil || w.Trigger.Pct == nil {
 			return fmt.Errorf("trigger.entry and trigger.pct are required")
-		}
-	case "qualitative":
-		if strings.TrimSpace(w.Trigger.Condition) == "" {
-			return fmt.Errorf("trigger.condition is required for qualitative")
 		}
 	default:
 		return fmt.Errorf("unknown trigger.type %q", w.Trigger.Type)
