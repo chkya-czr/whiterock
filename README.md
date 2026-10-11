@@ -16,7 +16,7 @@ its output is rejected if it introduces a number that cannot be traced to them.
    Secret Manager secret: `gcloud secrets versions add watchlist-yaml
    --data-file=watchlist.yaml`. Run inside Cloud Run Job with a service
    account granted Secret Manager Secret Accessor, Firestore user, and Sheets
-   Viewer to the relevant sheet.
+   Editor to the relevant sheet. Also create `exa-api-key` in Secret Manager.
    The executable obtains an access token from the Cloud Run metadata service;
    credentials are not read from environment variables.
 
@@ -33,6 +33,9 @@ weekly to the Job's `:run` endpoint with an OAuth service account holding
 
 For temporary live testing only, copy `.env.example` to the ignored `.env`,
 fill it with real values, and run `go run ./cmd/weekly-run --local-env=.env`.
+Use `--dry-run` to execute market, macro, LLM, and news calls while printing
+the digest and prospective Sheet rows without writing Firestore/Sheets or
+sending email.
 `GOOGLE_ACCESS_TOKEN` must be a short-lived value from `gcloud auth
 application-default print-access-token`; it lets the program access the same
 Secret Manager-independent Firestore and Sheets APIs locally. Do not commit

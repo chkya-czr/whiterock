@@ -75,27 +75,30 @@ func Build(ctx context.Context, f *Fred, md marketdata.Client) (Context, error) 
 		return c, e
 	}
 	Regimes(&c)
-	c.SectorRS, e = SectorRelativeStrength(ctx, md)
+	c.SectorRS, c.SPYPrice, e = SectorRelativeStrength(ctx, md)
 	if e != nil {
 		return c, e
 	}
 	return c, nil
 }
-func SectorRelativeStrength(ctx context.Context, md marketdata.Client) (map[string]float64, error) {
+func SectorRelativeStrength(ctx context.Context, md marketdata.Client) (map[string]float64, float64, error) {
 	symbols := []string{"SPY", "SMH", "XLK", "XLF", "XLE", "GLD"}
 	r := map[string]float64{}
-	var spy float64
+	var spy, spyPrice float64
 	for _, s := range symbols {
 		v, e := md.Daily(ctx, s, 30)
 		if e != nil {
-			return nil, e
+			return nil, 0, e
 		}
 		if len(v) < 21 {
-			return nil, fmt.Errorf("%s has fewer than 21 prices", s)
+			return nil, 0, fmt.Errorf("%s has fewer than 21 prices", s)
 		}
 		change := (v[len(v)-1].Close/v[len(v)-21].Close - 1) * 100
 		if s == "SPY" {
 			spy = change
+			// Persist the price used as the broad-market reference alongside
+			// every weekly snapshot.
+			spyPrice = v[len(v)-1].Close
 		} else {
 			r[s] = change
 		}
@@ -103,7 +106,7 @@ func SectorRelativeStrength(ctx context.Context, md marketdata.Client) (map[stri
 	for s := range r {
 		r[s] -= spy
 	}
-	return r, nil
+	return r, spyPrice, nil
 }
 func RankedSectorRS(rs map[string]float64) []string {
 	out := make([]string, 0, len(rs))

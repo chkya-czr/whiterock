@@ -14,6 +14,24 @@ type AttentionEvent struct {
 	Fact   string `json:"fact"`
 }
 
+// ActiveWeeks counts consecutive weekly appearances for this ticker's active
+// event kinds from the previous persisted snapshot.
+func ActiveWeeks(events []AttentionEvent, previous []string, prior map[string]int) map[string]int {
+	was := map[string]bool{}
+	for _, k := range previous {
+		was[k] = true
+	}
+	out := map[string]int{}
+	for _, e := range events {
+		if was[e.Kind] {
+			out[e.Kind] = prior[e.Kind] + 1
+		} else {
+			out[e.Kind] = 1
+		}
+	}
+	return out
+}
+
 // Attention evaluates only supplied daily closes. Rules lacking their required
 // history are skipped; callers can log the returned rule names without turning
 // a newly listed symbol into a failed run.

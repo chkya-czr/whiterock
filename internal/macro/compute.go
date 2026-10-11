@@ -10,6 +10,7 @@ type Context struct {
 	FedFunds, CurveSpreadBps, CorePCEYoY, NetLiquidityB, Liquidity8WeekPct, Dollar, Dollar1MonthPct, HYSpreadBps, VIX float64
 	CurveState, LiquidityTrend, DollarTrend, CreditRegime, VIXRegime                                                  string
 	SectorRS                                                                                                          map[string]float64
+	SPYPrice                                                                                                          float64
 }
 
 func Latest(v []Observation) (float64, error) {

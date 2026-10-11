@@ -16,14 +16,23 @@ func (staticToken) Token(context.Context) (string, error) { return "test-token",
 // (values.append) bodies it receives, appending them into `rows` so a
 // second Sync call in the same test sees them as already present.
 type fakeSheet struct {
-	rows     [][]string
-	appended [][]any
+	rows          [][]string
+	appended      [][]any
+	headerUpdated bool
 }
 
 func (f *fakeSheet) server() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			_ = json.NewEncoder(w).Encode(map[string]any{"values": f.rows})
+			return
+		}
+		if r.Method == http.MethodPut {
+			f.headerUpdated = true
+			if len(f.rows) > 0 {
+				f.rows[0] = append(f.rows[0], "model_rating", "model_confidence")
+			}
+			w.WriteHeader(http.StatusOK)
 			return
 		}
 		var body struct {
@@ -60,9 +69,15 @@ func TestSyncAppendsMissingRows(t *testing.T) {
 	if len(fs.appended) != 2 {
 		t.Fatalf("want 2 appended rows, got %d", len(fs.appended))
 	}
+	if !fs.headerUpdated {
+		t.Fatal("expected G/H model headers to be added")
+	}
 	for _, v := range fs.appended {
 		if v[4] != "" || v[5] != "" {
 			t.Fatalf("expected blank decision/reason, got %v", v)
+		}
+		if len(v) != 8 {
+			t.Fatalf("expected columns A-H, got %v", v)
 		}
 	}
 }
@@ -110,5 +125,12 @@ func TestSyncSkipsWithoutSheetID(t *testing.T) {
 	s := Sheets{Tokens: staticToken{}}
 	if e := s.Sync(context.Background(), []Row{{Week: "2026-09-27", Ticker: "AMD"}}); e != nil {
 		t.Fatalf("Sync with no sheet ID should no-op, got: %v", e)
+	}
+}
+
+func TestLegacyRangeIsExtendedForModelColumns(t *testing.T) {
+	s := Sheets{Range: "Sheet1!A:F"}
+	if got := s.rangeOrDefault(); got != "Sheet1!A:H" {
+		t.Fatalf("range=%q", got)
 	}
 }

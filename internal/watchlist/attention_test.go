@@ -58,3 +58,10 @@ func TestAttentionNewHigh(t *testing.T) {
 		t.Fatalf("events=%+v", events)
 	}
 }
+
+func TestActiveWeeks(t *testing.T) {
+	got := ActiveWeeks([]AttentionEvent{{Kind: "RSI_LOW"}, {Kind: "WEEKLY_MOVE"}}, []string{"RSI_LOW"}, map[string]int{"RSI_LOW": 2})
+	if got["RSI_LOW"] != 3 || got["WEEKLY_MOVE"] != 1 {
+		t.Fatalf("got=%v", got)
+	}
+}

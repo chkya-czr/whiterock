@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -55,12 +56,20 @@ func (d *DeepInfra) Complete(ctx context.Context, system, user string) (string, 
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
 	}
 	if e = json.NewDecoder(r.Body).Decode(&out); e != nil {
 		return "", e
 	}
 	if len(out.Choices) != 1 || strings.TrimSpace(out.Choices[0].Message.Content) == "" {
 		return "", fmt.Errorf("DeepInfra returned no completion")
+	}
+	if out.Usage.TotalTokens > 0 || out.Usage.PromptTokens > 0 || out.Usage.CompletionTokens > 0 {
+		log.Printf("LLM tokens: prompt=%d completion=%d total=%d", out.Usage.PromptTokens, out.Usage.CompletionTokens, out.Usage.TotalTokens)
 	}
 	return out.Choices[0].Message.Content, nil
 }

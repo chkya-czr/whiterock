@@ -18,18 +18,33 @@ import (
 )
 
 type Snapshot struct {
-	Week, Ticker string
-	Price        float64
-	Status       string
-	Facts        json.RawMessage
-	Macro        json.RawMessage
-	LLM          json.RawMessage
-	CreatedAt    time.Time
+	Week, Ticker       string
+	Price              float64
+	Status             string
+	AttentionKinds     []string
+	WeeksActive        map[string]int
+	InDecisions        bool
+	Rating, Confidence string
+	Drivers            json.RawMessage
+	Articles           json.RawMessage
+	SPYPrice           float64
+	Facts              json.RawMessage
+	Macro              json.RawMessage
+	LLM                json.RawMessage
+	CreatedAt          time.Time
 }
 type Store interface {
 	Previous(context.Context, string, string) (*Snapshot, error)
 	Save(context.Context, Snapshot) error
 }
+
+// DryRun preserves reads while suppressing persistence for a complete local
+// pipeline rehearsal.
+type DryRun struct{ Store }
+
+func (d DryRun) Save(context.Context, Snapshot) error                        { return nil }
+func (d DryRun) Previous(context.Context, string, string) (*Snapshot, error) { return nil, nil }
+
 type Firestore struct {
 	Project string
 	Tokens  gcp.TokenSource

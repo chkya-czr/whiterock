@@ -21,3 +21,14 @@ func TestRenderPulseListsQuietBeforeWatchOnly(t *testing.T) {
 		t.Fatalf("pulse ordering incorrect:\n%s", got)
 	}
 }
+
+func TestRenderDecisionZeroAndQuestion(t *testing.T) {
+	empty := Render(Digest{Week: "2026-10-12"})
+	if !strings.Contains(empty, "Nothing needs a decision this week.") {
+		t.Fatalf("missing zero state: %s", empty)
+	}
+	got := Render(Digest{Week: "2026-10-12", Decisions: []Decision{{Ticker: "AMD", Kind: "ATTENTION", Rating: "WAIT", Confidence: "LOW", Summary: "facts", CaseFor: "for", CaseAgainst: "against", WouldChangeIf: "change", Question: "Start a position, or keep watching?"}}})
+	if !strings.Contains(got, "Question for review: Start a position, or keep watching?") {
+		t.Fatalf("missing question: %s", got)
+	}
+}
