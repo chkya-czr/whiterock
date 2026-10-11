@@ -39,7 +39,10 @@ func (c *TwelveData) init() {
 		c.limiter = make(chan time.Time, 1)
 		c.limiter <- time.Now()
 		go func() {
-			t := time.NewTicker(7500 * time.Millisecond)
+			// Twelve Data's free tier permits eight credits per rolling minute.
+			// Eight-second spacing leaves a boundary margin; 7.5 seconds can
+			// start a ninth request inside the provider's rolling window.
+			t := time.NewTicker(8 * time.Second)
 			defer t.Stop()
 			for v := range t.C {
 				c.limiter <- v
