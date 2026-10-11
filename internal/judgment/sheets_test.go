@@ -134,3 +134,40 @@ func TestLegacyRangeIsExtendedForModelColumns(t *testing.T) {
 		t.Fatalf("range=%q", got)
 	}
 }
+
+func TestEntriesLocateColumnsByHeaderNotPosition(t *testing.T) {
+	fs := &fakeSheet{rows: [][]string{
+		{"my_reason", "ticker", "model_rating", "week", "my_decision", "flagged_status"},
+		{"earnings first", "fico", "WAIT", "2026-10-05", "Waited", "ATTENTION"},
+		{"", "AMD", "", "not-a-week", "Bought", "TRIGGER"},
+		{"older", "FICO", "", "2026-09-01", "Bought", "ATTENTION"},
+		{"", "NOW", "", "2026-10-05", "  ", "ATTENTION"},
+	}}
+	srv := fs.server()
+	defer srv.Close()
+	s := Sheets{ID: "sheet1", Tokens: staticToken{}, BaseURL: srv.URL}
+	entries, err := s.Entries(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("unparseable week should be skipped: %+v", entries)
+	}
+	latest := LatestDecisions(entries)
+	f := latest["FICO"]
+	if f.Week != "2026-10-05" || f.Decision != "Waited" || f.Reason != "earnings first" || f.Status != "ATTENTION" || f.ModelRating != "WAIT" {
+		t.Fatalf("FICO latest = %+v", f)
+	}
+	if _, ok := latest["NOW"]; ok {
+		t.Fatal("blank my_decision must not count as a decision")
+	}
+	if _, ok := Find(entries, "2026-10-05", "now"); !ok {
+		t.Fatal("Find should be case-insensitive on ticker")
+	}
+}
+
+func TestEntriesRejectsSheetWithoutDecisionHeaders(t *testing.T) {
+	if _, err := parseEntries([][]string{{"week", "ticker"}, {"2026-10-05", "AMD"}}); err == nil {
+		t.Fatal("expected missing-header error")
+	}
+}

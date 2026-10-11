@@ -14,6 +14,8 @@ type File struct {
 	Attention Attention `yaml:"attention"`
 	Rating    Rating    `yaml:"rating"`
 	News      News      `yaml:"news"`
+	Review    Review    `yaml:"review"`
+	Memory    Memory    `yaml:"memory"`
 	Watchlist []Watch   `yaml:"watchlist"`
 }
 
@@ -22,9 +24,23 @@ type Attention struct {
 	RSILow          float64 `yaml:"rsi_low"`
 	RSIHigh         float64 `yaml:"rsi_high"`
 	WeeklyMovePct   float64 `yaml:"weekly_move_pct"`
+	MonthlyMovePct  float64 `yaml:"monthly_move_pct"`
 	SMA200Cross     bool    `yaml:"sma200_cross"`
 	New52WExtreme   bool    `yaml:"new_52w_extreme"`
 	ApproachingBand float64 `yaml:"approaching_band_pct"`
+}
+
+// Review bounds the REVIEW and FYI sections of the weekly email.
+type Review struct {
+	MaxItems     int `yaml:"max_items"`
+	FYIMaxListed int `yaml:"fyi_max_listed"`
+}
+
+// Memory controls how long a logged "Waited" decision suppresses a REVIEW
+// item and how far back a logged decision is quoted as context.
+type Memory struct {
+	WaitedSuppressWeeks  int `yaml:"waited_suppress_weeks"`
+	DecisionContextWeeks int `yaml:"decision_context_weeks"`
 }
 
 type Rating struct {
@@ -105,6 +121,15 @@ func applyDefaults(f *File) {
 	if f.Attention == (Attention{}) {
 		f.Attention = Attention{PctBelow52WHigh: 15, RSILow: 30, RSIHigh: 70, WeeklyMovePct: 8, SMA200Cross: true, New52WExtreme: true, ApproachingBand: 5}
 	}
+	if f.Attention.MonthlyMovePct == 0 {
+		f.Attention.MonthlyMovePct = 20
+	}
+	if f.Review == (Review{}) {
+		f.Review = Review{MaxItems: 3, FYIMaxListed: 15}
+	}
+	if f.Memory == (Memory{}) {
+		f.Memory = Memory{WaitedSuppressWeeks: 4, DecisionContextWeeks: 8}
+	}
 	if f.Rating.Horizon == "" {
 		f.Rating.Horizon = "6-12 months"
 	}
@@ -115,8 +140,14 @@ func applyDefaults(f *File) {
 
 func (f File) Validate() error {
 	a := f.Attention
-	if a.PctBelow52WHigh <= 0 || a.RSILow < 0 || a.RSIHigh > 100 || a.RSILow >= a.RSIHigh || a.WeeklyMovePct <= 0 || a.ApproachingBand <= 0 {
+	if a.PctBelow52WHigh <= 0 || a.RSILow < 0 || a.RSIHigh > 100 || a.RSILow >= a.RSIHigh || a.WeeklyMovePct <= 0 || a.MonthlyMovePct <= 0 || a.ApproachingBand <= 0 {
 		return fmt.Errorf("invalid attention configuration")
+	}
+	if f.Review.MaxItems <= 0 || f.Review.FYIMaxListed <= 0 {
+		return fmt.Errorf("review.max_items and review.fyi_max_listed must be positive")
+	}
+	if f.Memory.WaitedSuppressWeeks <= 0 || f.Memory.DecisionContextWeeks <= 0 {
+		return fmt.Errorf("memory.waited_suppress_weeks and memory.decision_context_weeks must be positive")
 	}
 	if strings.TrimSpace(f.Rating.Horizon) == "" {
 		return fmt.Errorf("rating.horizon is required")

@@ -24,6 +24,9 @@ type Snapshot struct {
 	AttentionKinds     []string
 	WeeksActive        map[string]int
 	InDecisions        bool
+	Bucket             string // ACT, REVIEW or FYI
+	Suppressed         bool
+	SuppressedReason   string
 	Rating, Confidence string
 	Drivers            json.RawMessage
 	Articles           json.RawMessage
@@ -38,12 +41,33 @@ type Store interface {
 	Save(context.Context, Snapshot) error
 }
 
-// DryRun preserves reads while suppressing persistence for a complete local
-// pipeline rehearsal.
+// Historian is implemented by stores that can return every earlier snapshot
+// for a ticker, newest first, not only the latest one.
+type Historian interface {
+	History(ctx context.Context, ticker, week string) ([]Snapshot, error)
+}
+
+// Load returns the snapshots for ticker strictly before week, newest first.
+// Stores without full history yield at most the previous snapshot.
+func Load(ctx context.Context, s Store, ticker, week string) ([]Snapshot, error) {
+	if h, ok := s.(Historian); ok {
+		return h.History(ctx, ticker, week)
+	}
+	p, err := s.Previous(ctx, ticker, week)
+	if err != nil || p == nil {
+		return nil, err
+	}
+	return []Snapshot{*p}, nil
+}
+
+// DryRun reads through to the underlying store (so a rehearsal sees real
+// weeks_active and decision history) but never persists anything.
 type DryRun struct{ Store }
 
-func (d DryRun) Save(context.Context, Snapshot) error                        { return nil }
-func (d DryRun) Previous(context.Context, string, string) (*Snapshot, error) { return nil, nil }
+func (d DryRun) Save(context.Context, Snapshot) error { return nil }
+func (d DryRun) History(ctx context.Context, ticker, week string) ([]Snapshot, error) {
+	return Load(ctx, d.Store, ticker, week)
+}
 
 type Firestore struct {
 	Project string
@@ -127,7 +151,17 @@ func (f Firestore) Delete(ctx context.Context, ticker, week string) error {
 	}
 	return nil
 }
-func (f Firestore) Previous(ctx context.Context, ticker, week string) (*Snapshot, error) { // Uses a collection query and reads the JSON payload verbatim.
+func (f Firestore) Previous(ctx context.Context, ticker, week string) (*Snapshot, error) {
+	found, e := f.History(ctx, ticker, week)
+	if e != nil || len(found) == 0 {
+		return nil, e
+	}
+	return &found[0], nil
+}
+
+// History uses a collection query and reads the JSON payload verbatim. It
+// returns snapshots strictly before week, newest first.
+func (f Firestore) History(ctx context.Context, ticker, week string) ([]Snapshot, error) {
 	if f.Project == "" {
 		return nil, fmt.Errorf("Firestore project is required")
 	}
@@ -171,11 +205,8 @@ func (f Firestore) Previous(ctx context.Context, ticker, week string) (*Snapshot
 			found = append(found, s)
 		}
 	}
-	if len(found) == 0 {
-		return nil, nil
-	}
 	sort.Slice(found, func(i, j int) bool { return found[i].Week > found[j].Week })
-	return &found[0], nil
+	return found, nil
 }
 
 func firestoreHTTPError(operation string, response *http.Response) error {

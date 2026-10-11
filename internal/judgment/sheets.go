@@ -9,9 +9,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/aayushgogia/stock-research-tool/internal/gcp"
 )
@@ -24,6 +26,7 @@ type Row struct{ Week, Ticker, Status, SummaryRef, ModelRating, ModelConfidence 
 
 type Reader interface {
 	LastWeek(context.Context, string) ([]Entry, error)
+	Entries(context.Context) ([]Entry, error)
 }
 type Writer interface {
 	Sync(context.Context, []Row) error
@@ -87,7 +90,39 @@ func (s Sheets) values(ctx context.Context) ([][]string, error) {
 	return v.Values, nil
 }
 
+// LastWeek returns the rows logged for exactly one week.
 func (s Sheets) LastWeek(ctx context.Context, week string) ([]Entry, error) {
+	all, e := s.Entries(ctx)
+	if e != nil {
+		return nil, e
+	}
+	out := []Entry{}
+	for _, x := range all {
+		if x.Week == week {
+			out = append(out, x)
+		}
+	}
+	return out, nil
+}
+
+// headerAliases lists accepted header spellings per field. The first entry is
+// the canonical name; the legacy schema used the shorter ones.
+var headerAliases = map[string][]string{
+	"week":       {"week"},
+	"ticker":     {"ticker"},
+	"status":     {"flagged_status", "status"},
+	"ref":        {"summary_ref", "ref", "summary_reference"},
+	"decision":   {"my_decision", "decision"},
+	"reason":     {"my_reason", "reason"},
+	"rating":     {"model_rating"},
+	"confidence": {"model_confidence"},
+}
+
+// Entries reads every row, locating columns by header name rather than
+// position, so reordering or inserting columns cannot misattribute a
+// decision. Tickers are upper-cased; rows with an unparseable week or no
+// ticker are skipped and logged.
+func (s Sheets) Entries(ctx context.Context) ([]Entry, error) {
 	if s.ID == "" {
 		return nil, nil
 	}
@@ -95,23 +130,87 @@ func (s Sheets) LastWeek(ctx context.Context, week string) ([]Entry, error) {
 	if e != nil {
 		return nil, e
 	}
-	out := []Entry{}
-	for i, row := range rows {
-		if i == 0 || len(row) < 6 {
-			continue
+	return parseEntries(rows)
+}
+
+func parseEntries(rows [][]string) ([]Entry, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	idx := map[string]int{}
+	for i, h := range rows[0] {
+		idx[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+	col := func(field string) int {
+		for _, name := range headerAliases[field] {
+			if i, ok := idx[name]; ok {
+				return i
+			}
 		}
-		if row[0] == week {
-			e := Entry{Week: row[0], Ticker: row[1], Status: row[2], SummaryRef: row[3], Decision: row[4], Reason: row[5]}
-			if len(row) > 6 {
-				e.ModelRating = row[6]
-			}
-			if len(row) > 7 {
-				e.ModelConfidence = row[7]
-			}
-			out = append(out, e)
+		return -1
+	}
+	cols := map[string]int{}
+	for f := range headerAliases {
+		cols[f] = col(f)
+	}
+	for _, need := range []string{"week", "ticker", "decision", "reason"} {
+		if cols[need] < 0 {
+			return nil, fmt.Errorf("Sheet header is missing %q column", headerAliases[need][0])
 		}
 	}
+	cell := func(row []string, field string) string {
+		if i := cols[field]; i >= 0 && i < len(row) {
+			return strings.TrimSpace(row[i])
+		}
+		return ""
+	}
+	out := make([]Entry, 0, len(rows))
+	for n, row := range rows[1:] {
+		week := cell(row, "week")
+		if _, err := time.Parse("2006-01-02", week); err != nil {
+			if len(row) > 0 && strings.TrimSpace(strings.Join(row, "")) != "" {
+				log.Printf("Sheet row %d skipped: unparseable week %q", n+2, week)
+			}
+			continue
+		}
+		ticker := strings.ToUpper(cell(row, "ticker"))
+		if ticker == "" {
+			log.Printf("Sheet row %d skipped: blank ticker", n+2)
+			continue
+		}
+		out = append(out, Entry{Week: week, Ticker: ticker, Status: cell(row, "status"), SummaryRef: cell(row, "ref"), Decision: cell(row, "decision"), Reason: cell(row, "reason"), ModelRating: cell(row, "rating"), ModelConfidence: cell(row, "confidence")})
+	}
 	return out, nil
+}
+
+// LatestDecisions maps ticker to its most recent entry with a non-blank
+// my_decision (greatest week; the later row wins a tie).
+func LatestDecisions(entries []Entry) map[string]Entry {
+	out := map[string]Entry{}
+	for _, x := range entries {
+		if strings.TrimSpace(x.Decision) == "" {
+			continue
+		}
+		if cur, ok := out[x.Ticker]; !ok || x.Week >= cur.Week {
+			out[x.Ticker] = x
+		}
+	}
+	return out
+}
+
+// Find returns the entry for (week, ticker), preferring a row that carries a
+// decision when duplicates exist.
+func Find(entries []Entry, week, ticker string) (Entry, bool) {
+	var found Entry
+	ok := false
+	for _, x := range entries {
+		if x.Week == week && x.Ticker == strings.ToUpper(ticker) {
+			if !ok || (found.Decision == "" && x.Decision != "") {
+				found, ok = x, true
+			}
+		}
+	}
+	return found, ok
 }
 
 // Sync appends one row per entry in rows whose (week, ticker) does not

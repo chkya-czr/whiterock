@@ -3,9 +3,16 @@ attention:
   rsi_low: 30
   rsi_high: 70
   weekly_move_pct: 8
+  monthly_move_pct: 20
   sma200_cross: true
   new_52w_extreme: true
   approaching_band_pct: 5
+review:
+  max_items: 3
+  fyi_max_listed: 15
+memory:
+  waited_suppress_weeks: 4
+  decision_context_weeks: 8
 rating:
   horizon: "6-12 months"
 news:

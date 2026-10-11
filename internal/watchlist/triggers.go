@@ -84,3 +84,31 @@ func (m MacroConditions) Matches(p *string) bool {
 	return false
 }
 func NearlyEqual(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+
+// DescribeTrigger renders an explicit numeric trigger against current values:
+// facts is "{value} vs your level {level} ({pct}% above|below)" and condition
+// is the deterministic level that would fire it, e.g. "at or below 4000.00".
+func DescribeTrigger(w config.Watch, price, rsi float64) (facts, condition string, ok bool) {
+	var level, current float64
+	subject, dir := "", ""
+	switch w.Trigger.Type {
+	case "price_below":
+		level, current, dir = *w.Trigger.Value, price, "at or below"
+	case "price_above":
+		level, current, dir = *w.Trigger.Value, price, "at or above"
+	case "rsi_below":
+		level, current, dir, subject = *w.Trigger.Value, rsi, "at or below", "RSI "
+	case "price_above_pct_from_entry":
+		level, current, dir = *w.Trigger.Entry*(1+*w.Trigger.Pct/100), price, "at or above"
+	default:
+		return "", "", false
+	}
+	side := "above"
+	if current < level {
+		side = "below"
+	}
+	pct := math.Abs(current/level-1) * 100
+	facts = fmt.Sprintf("%s%.2f vs your level %.2f (%.2f%% %s)", subject, current, level, pct, side)
+	condition = fmt.Sprintf("%s%s %.2f", subject, dir, level)
+	return facts, condition, true
+}

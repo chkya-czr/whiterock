@@ -5,6 +5,27 @@ trading system and it never makes a recommendation. Go code computes every
 number and applies every trigger; the LLM only writes from supplied facts and
 its output is rejected if it introduces a number that cannot be traced to them.
 
+## Weekly email structure
+
+Every ticker lands in exactly one bucket, and the email lists them in this
+order: **ACT** (an explicit numeric trigger is TRIGGER or NEAR TRIGGER, never
+suppressed, uncapped), **REVIEW** (a *new* attention event this week, capped at
+`review.max_items`, with at least one held and one non-held name when both
+exist), **From last week** (last week's ACT/REVIEW items and whether you logged
+a decision in the Sheet), **Holdings**, **FYI** (ongoing events, REVIEW
+overflow and Waited-suppressed names, one compact line each), then the macro
+backdrop and watchlist pulse.
+
+Decision memory comes from the judgment Sheet, read by header name
+(`week`, `ticker`, `flagged_status`, `my_decision`, `my_reason`). A ticker you
+logged as `Waited` is moved to FYI for `memory.waited_suppress_weeks` weeks
+unless a new event kind appears; any logged decision within
+`memory.decision_context_weeks` is quoted on its ACT/REVIEW item. Optional
+global config blocks (all have defaults): `attention.monthly_move_pct` (20),
+`review.max_items` (3), `review.fyi_max_listed` (15),
+`memory.waited_suppress_weeks` (4), `memory.decision_context_weeks` (8).
+`--dry-run` prints each ticker's bucket and the reason before the email.
+
 ## Local preparation
 
 1. Copy `watchlist.example.yaml` to the ignored `watchlist.yaml`, then edit

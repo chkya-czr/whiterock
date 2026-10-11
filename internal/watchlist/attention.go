@@ -8,10 +8,14 @@ import (
 	"github.com/aayushgogia/stock-research-tool/internal/marketdata"
 )
 
+// AttentionEvent is one deterministic observation. Short is the compact label
+// used in the FYI list; Negative marks events that point down or weaker.
 type AttentionEvent struct {
-	Ticker string `json:"ticker"`
-	Kind   string `json:"kind"`
-	Fact   string `json:"fact"`
+	Ticker   string `json:"ticker"`
+	Kind     string `json:"kind"`
+	Fact     string `json:"fact"`
+	Short    string `json:"short,omitempty"`
+	Negative bool   `json:"negative,omitempty"`
 }
 
 // ActiveWeeks counts consecutive weekly appearances for this ticker's active
@@ -42,8 +46,8 @@ func Attention(ticker string, candles []marketdata.Candle, c config.Attention) (
 	}
 	var events []AttentionEvent
 	var skipped []string
-	add := func(kind, fact string) {
-		events = append(events, AttentionEvent{Ticker: ticker, Kind: kind, Fact: fact})
+	add := func(kind, fact, short string, negative bool) {
+		events = append(events, AttentionEvent{Ticker: ticker, Kind: kind, Fact: fact, Short: short, Negative: negative})
 	}
 
 	if len(closes) < 252 {
@@ -52,17 +56,17 @@ func Attention(ticker string, candles []marketdata.Candle, c config.Attention) (
 		high := max(closes[len(closes)-252:])
 		below := (1 - closes[len(closes)-1]/high) * 100
 		if below >= c.PctBelow52WHigh {
-			add("BELOW_52W_HIGH", fmt.Sprintf("%.2f%% below 52-week high of %.2f", below, high))
+			add("BELOW_52W_HIGH", fmt.Sprintf("%.2f%% below 52-week high of %.2f", below, high), fmt.Sprintf("%.1f%% below 52-week high", below), true)
 		}
 	}
 	if len(closes) < 15 {
 		skipped = append(skipped, "RSI")
 	} else if rsi, err := marketdata.RSI(closes, 14); err == nil {
 		if rsi < c.RSILow {
-			add("RSI_LOW", fmt.Sprintf("RSI(14) %.2f below %.2f", rsi, c.RSILow))
+			add("RSI_LOW", fmt.Sprintf("RSI(14) %.2f below %.2f", rsi, c.RSILow), fmt.Sprintf("RSI %.1f", rsi), false)
 		}
 		if rsi > c.RSIHigh {
-			add("RSI_HIGH", fmt.Sprintf("RSI(14) %.2f above %.2f", rsi, c.RSIHigh))
+			add("RSI_HIGH", fmt.Sprintf("RSI(14) %.2f above %.2f", rsi, c.RSIHigh), fmt.Sprintf("RSI %.1f", rsi), false)
 		}
 	}
 	if len(closes) < 6 {
@@ -70,7 +74,17 @@ func Attention(ticker string, candles []marketdata.Candle, c config.Attention) (
 	} else {
 		move := (closes[len(closes)-1]/closes[len(closes)-6] - 1) * 100
 		if math.Abs(move) >= c.WeeklyMovePct {
-			add("WEEKLY_MOVE", fmt.Sprintf("%.2f%% move over 5 sessions", move))
+			add("WEEKLY_MOVE", fmt.Sprintf("%.2f%% move over 5 sessions", move), fmt.Sprintf("%+.1f%% wk", move), move < 0)
+		}
+	}
+	// Rounded to the two decimals shown in the email so that a move of exactly
+	// the configured threshold fires despite binary floating-point error.
+	if len(closes) < 22 {
+		skipped = append(skipped, "MONTHLY_MOVE")
+	} else {
+		move := math.Round((closes[len(closes)-1]/closes[len(closes)-22]-1)*100*100) / 100
+		if c.MonthlyMovePct > 0 && math.Abs(move) >= c.MonthlyMovePct {
+			add("MONTHLY_MOVE", fmt.Sprintf("%.2f%% move over 21 sessions", move), fmt.Sprintf("%+.1f%% mo", move), move < 0)
 		}
 	}
 	if !c.SMA200Cross {
@@ -83,9 +97,9 @@ func Attention(ticker string, candles []marketdata.Candle, c config.Attention) (
 		latest := closes[len(closes)-1] - latestSMA
 		prior := closes[len(closes)-6] - priorSMA
 		if latest >= 0 && prior < 0 {
-			add("SMA200_CROSS_UP", fmt.Sprintf("close %.2f crossed above SMA200 %.2f", closes[len(closes)-1], latestSMA))
+			add("SMA200_CROSS_UP", fmt.Sprintf("close %.2f crossed above SMA200 %.2f", closes[len(closes)-1], latestSMA), "crossed above SMA200", false)
 		} else if latest < 0 && prior >= 0 {
-			add("SMA200_CROSS_DOWN", fmt.Sprintf("close %.2f crossed below SMA200 %.2f", closes[len(closes)-1], latestSMA))
+			add("SMA200_CROSS_DOWN", fmt.Sprintf("close %.2f crossed below SMA200 %.2f", closes[len(closes)-1], latestSMA), "crossed below SMA200", true)
 		}
 	}
 	if !c.New52WExtreme {
@@ -97,13 +111,13 @@ func Attention(ticker string, candles []marketdata.Candle, c config.Attention) (
 		high, low := max(prior), min(prior)
 		for _, close := range closes[len(closes)-5:] {
 			if close > high {
-				add("NEW_52W_HIGH", fmt.Sprintf("new 52-week high %.2f above prior %.2f", close, high))
+				add("NEW_52W_HIGH", fmt.Sprintf("new 52-week high %.2f above prior %.2f", close, high), "new 52-week high", false)
 				break
 			}
 		}
 		for _, close := range closes[len(closes)-5:] {
 			if close < low {
-				add("NEW_52W_LOW", fmt.Sprintf("new 52-week low %.2f below prior %.2f", close, low))
+				add("NEW_52W_LOW", fmt.Sprintf("new 52-week low %.2f below prior %.2f", close, low), "new 52-week low", true)
 				break
 			}
 		}

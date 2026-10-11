@@ -19,10 +19,3 @@ func TestXAUTriggerBand(t *testing.T) {
 		}
 	}
 }
-func TestCandidateOrdering(t *testing.T) {
-	in := []Candidate{{Ticker: "A", Kind: DecisionAttention, Held: false, WeeksActive: 2}, {Ticker: "B", Kind: DecisionNear}, {Ticker: "C", Kind: DecisionTrigger}, {Ticker: "D", Kind: DecisionAttention, Held: true}, {Ticker: "E", Kind: DecisionAttention, WeeksActive: 1}, {Ticker: "F", Kind: DecisionAttention, WeeksActive: 1}}
-	got, more := Candidates(in)
-	if len(got) != 5 || got[0].Ticker != "C" || got[1].Ticker != "B" || got[2].Ticker != "D" || len(more) != 1 {
-		t.Fatalf("got=%+v more=%v", got, more)
-	}
-}

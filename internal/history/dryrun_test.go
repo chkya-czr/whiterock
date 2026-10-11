@@ -13,16 +13,19 @@ func (s *countingStore) Previous(context.Context, string, string) (*Snapshot, er
 }
 func (s *countingStore) Save(context.Context, Snapshot) error { s.writes++; return nil }
 
-func TestDryRunDoesNotTouchUnderlyingStore(t *testing.T) {
+func TestDryRunReadsButDoesNotWrite(t *testing.T) {
 	base := &countingStore{}
 	dry := DryRun{Store: base}
-	if got, err := dry.Previous(context.Background(), "AMD", "2026-10-12"); err != nil || got != nil {
+	if got, err := dry.Previous(context.Background(), "AMD", "2026-10-12"); err != nil || got == nil {
 		t.Fatalf("Previous = %#v, %v", got, err)
+	}
+	if got, err := dry.History(context.Background(), "AMD", "2026-10-12"); err != nil || len(got) != 1 {
+		t.Fatalf("History = %#v, %v", got, err)
 	}
 	if err := dry.Save(context.Background(), Snapshot{}); err != nil {
 		t.Fatal(err)
 	}
-	if base.reads != 0 || base.writes != 0 {
-		t.Fatalf("dry run touched store: %+v", base)
+	if base.reads != 2 || base.writes != 0 {
+		t.Fatalf("dry run must read through and never write: %+v", base)
 	}
 }
