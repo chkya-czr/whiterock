@@ -29,6 +29,7 @@ type Model struct {
 type Item struct {
 	Header    string
 	Lines     []string
+	Notes     []string // data-quality notes shown under the facts
 	Context   string
 	Headlines []Headline
 	NewsNote  string
@@ -145,6 +146,9 @@ func section(b *strings.Builder, title, empty string, items []Item) {
 		fmt.Fprintf(b, "\n%s\n", x.Header)
 		for _, l := range x.Lines {
 			fmt.Fprintf(b, "%s\n", l)
+		}
+		for _, n := range x.Notes {
+			fmt.Fprintf(b, "Data check: %s\n", n)
 		}
 		if x.Context != "" {
 			fmt.Fprintf(b, "%s\n", x.Context)

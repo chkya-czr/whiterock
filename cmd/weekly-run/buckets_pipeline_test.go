@@ -12,6 +12,7 @@ import (
 	"github.com/aayushgogia/stock-research-tool/internal/judgment"
 	"github.com/aayushgogia/stock-research-tool/internal/llm"
 	"github.com/aayushgogia/stock-research-tool/internal/macro"
+	"github.com/aayushgogia/stock-research-tool/internal/marketdata"
 	"github.com/aayushgogia/stock-research-tool/internal/news"
 	"github.com/aayushgogia/stock-research-tool/internal/report"
 	"github.com/aayushgogia/stock-research-tool/internal/watchlist"
@@ -163,5 +164,41 @@ func TestPlacementInputJoinsDecisionWeekSnapshot(t *testing.T) {
 	in = placementInput(tickerFact{w: config.Watch{Ticker: "FICO"}}, 5, map[string]judgment.Entry{"FICO": {Week: "2026-09-01", Decision: "Bought"}})
 	if in.Logged == nil || in.Logged.SnapshotFound {
 		t.Fatalf("missing snapshot must be reported: %+v", in.Logged)
+	}
+}
+
+func TestDirectionConflict(t *testing.T) {
+	down := tickerFact{ind: marketdata.Indicators{WeekChangePct: -7, MonthChangePct: -12}}
+	up := tickerFact{ind: marketdata.Indicators{WeekChangePct: 6, MonthChangePct: 9}}
+	mixed := tickerFact{ind: marketdata.Indicators{WeekChangePct: -7, MonthChangePct: 12}}
+	say := func(s string) llm.Rating { return llm.Rating{Summary: s} }
+	cases := []struct {
+		name string
+		f    tickerFact
+		r    llm.Rating
+		bad  bool
+	}{
+		{"up-word while clearly down", down, say("Shares rallied on the report"), true},
+		{"down-word while clearly up", up, say("The stock plunged earlier"), true},
+		{"consistent wording passes", down, say("Shares slumped on the report"), false},
+		{"mixed week and month is never flagged", mixed, say("Shares rallied"), false},
+		{"substring is not a match", down, say("the rallying cry"), false},
+	}
+	for _, c := range cases {
+		if err := directionConflict(c.f, c.r); (err != nil) != c.bad {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+	}
+}
+
+func TestRatingStatsSummary(t *testing.T) {
+	var s ratingStats
+	s.record(nil, 1)
+	s.record(nil, 2)
+	s.record(errors.New("untraceable model number \"4\""), 2)
+	got := s.summary(true, 5)
+	want := "LLM validation: ratings accepted 2/3 (first attempt 1), macro brief ok=true, model calls=5; rejected: output cited an unsupported number x1"
+	if got != want {
+		t.Fatalf("%q", got)
 	}
 }

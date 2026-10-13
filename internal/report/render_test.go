@@ -113,3 +113,10 @@ func TestRenderHoldingsNonHoldFirstThenWeeklyMove(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestRenderShowsDataCheckNotes(t *testing.T) {
+	got := Render(Digest{Review: []Item{{Header: "XYZ - REVIEW", Lines: []string{"fact"}, Notes: []string{"largest one-day move is 48.0% on 2026-10-01; confirm it is not a split or data error"}, Model: Model{Unavailable: "x"}}}})
+	if !strings.Contains(got, "fact\nData check: largest one-day move is 48.0%") {
+		t.Fatal(got)
+	}
+}

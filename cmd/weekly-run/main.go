@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/aayushgogia/stock-research-tool/internal/config"
 	"github.com/aayushgogia/stock-research-tool/internal/gcp"
@@ -167,7 +168,7 @@ func pulseBrief(ctx context.Context, p llm.Provider, items []report.PulseItem) (
 	return "", lastErr
 }
 func macroBrief(ctx context.Context, p llm.Provider, c macro.Context) (llm.MacroBrief, bool) {
-	u := fmt.Sprintf("Fed funds %.2f%%; 10Y/2Y %.0f bps (%s); Core PCE YoY %.2f%%; net liquidity %.2fB (%s over 8 weeks, %.2f%%); dollar %.2f (%s over 1 month, %.2f%%); HY spread %.0f bps (%s); VIX %.2f (%s); sector RS: %s.", c.FedFunds, c.CurveSpreadBps, c.CurveState, c.CorePCEYoY, c.NetLiquidityB, c.LiquidityTrend, c.Liquidity8WeekPct, c.Dollar, c.DollarTrend, c.Dollar1MonthPct, c.HYSpreadBps, c.CreditRegime, c.VIX, c.VIXRegime, strings.Join(macro.RankedSectorRS(c.SectorRS), ", "))
+	u := "Today: " + time.Now().UTC().Format("Monday, 2 January 2006") + " (context only; data below is the latest available). " + fmt.Sprintf("Fed funds %.2f%%; 10Y/2Y %.0f bps (%s); Core PCE YoY %.2f%%; net liquidity %.2fB (%s over 8 weeks, %.2f%%); dollar %.2f (%s over 1 month, %.2f%%); HY spread %.0f bps (%s); VIX %.2f (%s); sector RS: %s.", c.FedFunds, c.CurveSpreadBps, c.CurveState, c.CorePCEYoY, c.NetLiquidityB, c.LiquidityTrend, c.Liquidity8WeekPct, c.Dollar, c.DollarTrend, c.Dollar1MonthPct, c.HYSpreadBps, c.CreditRegime, c.VIX, c.VIXRegime, strings.Join(macro.RankedSectorRS(c.SectorRS), ", "))
 	sys := "Use only the supplied facts. State current macro state and trend only; no forecasts. Return JSON: regime_tag, summary, notable_shifts. The summary must be three or four sentences. Do not use digits or numeric symbols in any JSON value: refer to measures by name and their supplied qualitative state instead."
 	allowed := nums(c)
 	var lastErr error

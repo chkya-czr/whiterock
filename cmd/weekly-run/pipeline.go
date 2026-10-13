@@ -33,6 +33,7 @@ type tickerFact struct {
 	prev      *history.Snapshot
 	hist      []history.Snapshot // earlier snapshots, newest first
 	readErr   error
+	issues    []watchlist.DataIssue // informational price-series checks
 	rating    llm.Rating
 	ratingOK  bool   // rating passed validation
 	ratingWhy string // short reason when it did not
@@ -61,6 +62,10 @@ func collect(ctx context.Context, md marketdata.Client, store history.Store, w c
 			return f, e
 		}
 		f.partial = true
+	}
+	f.issues = watchlist.CheckCandles(c, time.Now().UTC())
+	for _, is := range f.issues {
+		log.Printf("ticker %s data check %s: %s", w.Ticker, is.Kind, is.Detail)
 	}
 	var skipped []string
 	f.events, skipped = watchlist.Attention(w.Ticker, c, a)
@@ -97,7 +102,7 @@ func executePipeline(ctx context.Context, o opts, cfg config.File, twelveKey, fr
 		return fmt.Errorf("macro: %w", err)
 	}
 	log.Printf("macro data fetched: VIX regime=%s, credit=%s, liquidity=%s", mc.VIXRegime, mc.CreditRegime, mc.LiquidityTrend)
-	provider := llm.NewDeepInfra(deepInfraKey, o.model)
+	provider := &countingProvider{Provider: llm.NewDeepInfra(deepInfraKey, o.model)}
 	mb, macroOK := macroBrief(ctx, provider, mc)
 	if macroOK {
 		log.Printf("macro brief ready: %s", mb.RegimeTag)
@@ -187,6 +192,7 @@ func executePipeline(ctx context.Context, o opts, cfg config.File, twelveKey, fr
 	// Ratings and news run for ACT, REVIEW and held names only; FYI-only,
 	// non-held names make no model call and no news fetch.
 	newsOKByTicker := map[string]bool{}
+	var stats ratingStats
 	for i := range facts {
 		f := &facts[i]
 		if !f.decision && !f.w.Held {
@@ -194,8 +200,10 @@ func executePipeline(ctx context.Context, o opts, cfg config.File, twelveKey, fr
 		}
 		articles, newsOK := loadNews(*f)
 		newsOKByTicker[f.w.Ticker] = newsOK
+		callsBefore := provider.calls
 		rating, e := rate(ctx, provider, *f, cfg, mc, mb, articles, newsOK)
 		f.articles = articles
+		stats.record(e, provider.calls-callsBefore)
 		if e != nil {
 			log.Printf("rating %s unavailable (non-blocking): %v", f.w.Ticker, e)
 			deferred = append(deferred, fmt.Errorf("rating %s: %w", f.w.Ticker, e))
@@ -205,6 +213,7 @@ func executePipeline(ctx context.Context, o opts, cfg config.File, twelveKey, fr
 		}
 	}
 	log.Printf("Exa articles accepted: %d", newsCount)
+	log.Print(stats.summary(macroOK, provider.calls))
 
 	factsByTicker := map[string]*tickerFact{}
 	for i := range facts {
@@ -381,6 +390,8 @@ func shortReason(err error) string {
 		return "output used a disallowed value"
 	case strings.Contains(m, "missing required"), strings.Contains(m, "invalid rating JSON"), strings.Contains(m, "empty driver"):
 		return "output was incomplete or malformed"
+	case strings.Contains(m, "point the other way"):
+		return "output contradicted the price move"
 	case strings.Contains(m, "no material change"):
 		return "output contradicted last week's rating"
 	}
@@ -468,6 +479,9 @@ func itemView(f tickerFact, p watchlist.Placement, cfg config.File, today time.T
 	}
 	if !newsOK {
 		item.NewsNote = "Headlines unavailable this week."
+	}
+	for _, is := range f.issues {
+		item.Notes = append(item.Notes, is.Detail)
 	}
 	if p.Bucket == watchlist.BucketACT {
 		item.Header = fmt.Sprintf("%s - ACT - %s", f.w.Ticker, p.Numeric)
@@ -603,7 +617,16 @@ func rate(ctx context.Context, p llm.Provider, f tickerFact, cfg config.File, mc
 		prev = f.prev.Rating
 	}
 	allowed := llm.AllowedRatings(f.w.Held, f.sizing.AtCeiling)
-	sys, user := llm.RatingPrompt(f.w.Ticker, f.w.NewsQuery, cfg.Rating.Horizon, f.w.Rationale, positionText(f), prev, allowed, e)
+	pc := llm.PromptContext{AsOf: time.Now().UTC().Format("Monday, 2 January 2006")}
+	if !newsOK {
+		pc.Unavailable = append(pc.Unavailable, "recent news (fetch failed)")
+	} else if len(articles) == 0 {
+		pc.Unavailable = append(pc.Unavailable, "recent news (none found in the window)")
+	}
+	if !f.ind.FullHistory {
+		pc.Unavailable = append(pc.Unavailable, "52-week range and moving averages (short price history)")
+	}
+	sys, user := llm.RatingPrompt(f.w.Ticker, f.w.NewsQuery, cfg.Rating.Horizon, f.w.Rationale, positionText(f), prev, allowed, e, pc)
 	var last error
 	for i := 0; i < 2; i++ {
 		attemptUser := user
@@ -616,6 +639,9 @@ func rate(ctx context.Context, p llm.Provider, f tickerFact, cfg config.File, mc
 			continue
 		}
 		r, err := llm.ParseRating(raw, allowed, e, prev)
+		if err == nil {
+			err = directionConflict(f, r)
+		}
 		if err == nil {
 			if !newsOK && r.Confidence == "HIGH" {
 				r.Confidence = "MEDIUM"
@@ -638,4 +664,86 @@ func sortPulse(p []report.PulseItem) {
 		}
 		return a > b
 	})
+}
+
+var (
+	upWords   = []string{"surged", "soared", "rallied", "jumped", "skyrocketed", "spiked"}
+	downWords = []string{"plunged", "plummeted", "tumbled", "crashed", "sank", "slumped"}
+)
+
+// directionMarginPct is how far both the weekly and monthly move must point
+// the same way before contradicting prose is treated as an error.
+const directionMarginPct = 5.0
+
+// directionConflict is a deterministic consistency check: strong up-words
+// when both the week and month moves are clearly down (or the reverse) are
+// rejected so the model gets a repair attempt. It is deliberately narrow, as
+// prose about an earlier move is legitimate.
+func directionConflict(f tickerFact, r llm.Rating) error {
+	w, m := f.ind.WeekChangePct, f.ind.MonthChangePct
+	var words []string
+	switch {
+	case w <= -directionMarginPct && m <= -directionMarginPct:
+		words = upWords
+	case w >= directionMarginPct && m >= directionMarginPct:
+		words = downWords
+	default:
+		return nil
+	}
+	text := strings.ToLower(strings.Join([]string{r.Summary, r.CaseFor, r.CaseAgainst, r.WouldChangeIf, r.ChangeSinceLastWeek}, " "))
+	for _, tok := range strings.FieldsFunc(text, func(c rune) bool { return !(c >= 'a' && c <= 'z') }) {
+		for _, w := range words {
+			if tok == w {
+				return fmt.Errorf("output says %q but the supplied week and month moves point the other way", w)
+			}
+		}
+	}
+	return nil
+}
+
+// countingProvider counts model calls so a run can report how many attempts
+// each rating needed.
+type countingProvider struct {
+	llm.Provider
+	calls int
+}
+
+func (c *countingProvider) Complete(ctx context.Context, system, user string) (string, error) {
+	c.calls++
+	return c.Provider.Complete(ctx, system, user)
+}
+
+// ratingStats summarises rating validation for one run so a rising rejection
+// rate is visible in the job logs.
+type ratingStats struct {
+	rated, accepted, firstTry int
+	rejected                  map[string]int
+}
+
+func (s *ratingStats) record(err error, attempts int) {
+	s.rated++
+	if err == nil {
+		s.accepted++
+		if attempts == 1 {
+			s.firstTry++
+		}
+		return
+	}
+	if s.rejected == nil {
+		s.rejected = map[string]int{}
+	}
+	s.rejected[shortReason(err)]++
+}
+
+func (s ratingStats) summary(macroOK bool, calls int) string {
+	reasons := make([]string, 0, len(s.rejected))
+	for r, n := range s.rejected {
+		reasons = append(reasons, fmt.Sprintf("%s x%d", r, n))
+	}
+	sort.Strings(reasons)
+	out := fmt.Sprintf("LLM validation: ratings accepted %d/%d (first attempt %d), macro brief ok=%t, model calls=%d", s.accepted, s.rated, s.firstTry, macroOK, calls)
+	if len(reasons) > 0 {
+		out += "; rejected: " + strings.Join(reasons, ", ")
+	}
+	return out
 }
